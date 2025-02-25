@@ -17,10 +17,20 @@ add_test(NAME XRootD::cluster::start
 set_tests_properties(XRootD::cluster::start
   PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_SETUP XRootD_Cluster)
 
+if (BUILD_SCITOKENS AND HAVE_SCITOKEN_CONFIG_SET_STR)
+set_tests_properties(XRootD::cluster::start
+  PROPERTIES FIXTURES_REQUIRED SciTokens)
+endif()
+
 add_test(NAME XRootD::cluster::test
   COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/test.sh")
 set_tests_properties(XRootD::cluster::test
-  PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED XRootD_Cluster)
+  PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED XRootD_Cluster RUN_SERIAL 1)
+
+add_test(NAME XRootD::cluster::tpctest
+  COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/tpctest.sh")
+set_tests_properties(XRootD::cluster::tpctest
+    PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED XRootD_Cluster RUN_SERIAL 1)
 
 add_test(NAME XRootD::cluster::stop
   COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/setup.sh stop")
