@@ -4,6 +4,7 @@ list(APPEND XRDENV "CRC32C=$<TARGET_FILE:xrdcrc32c>")
 list(APPEND XRDENV "ADLER32=$<TARGET_FILE:xrdadler32>")
 list(APPEND XRDENV "XROOTD=$<TARGET_FILE:xrootd>")
 list(APPEND XRDENV "CMSD=$<TARGET_FILE:cmsd>")
+list(APPEND XRDENV "BINARY_DIR=${CMAKE_BINARY_DIR}")
 
 # If we have SciTokens, use common_scitokens_enabled.cfg; otherwise, use common.cfg
 if (BUILD_SCITOKENS AND HAVE_SCITOKEN_CONFIG_SET_STR)
@@ -25,13 +26,15 @@ set_tests_properties(XRootD::cluster::start
   PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_SETUP XRootD_Cluster)
 
 if (BUILD_SCITOKENS AND HAVE_SCITOKEN_CONFIG_SET_STR)
-  set_tests_properties(XRootD::cluster::start
-    PROPERTIES FIXTURES_REQUIRED SciTokens)
+  set_tests_properties(XRootD::cluster::start PROPERTIES FIXTURES_REQUIRED SciTokens)
 
   add_test(NAME XRootD::cluster::tpctest
     COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/tpctest.sh")
-  set_tests_properties(XRootD::cluster::tpctest
-    PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED XRootD_Cluster RUN_SERIAL 1)
+    set_tests_properties(XRootD::cluster::tpctest 
+    PROPERTIES ENVIRONMENT "${XRDENV}"
+    FIXTURES_REQUIRED "XRootD_Cluster;SciTokens"
+    RUN_SERIAL 1)
+
 endif()
 
 add_test(NAME XRootD::cluster::test
