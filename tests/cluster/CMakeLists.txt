@@ -5,7 +5,14 @@ list(APPEND XRDENV "ADLER32=$<TARGET_FILE:xrdadler32>")
 list(APPEND XRDENV "XROOTD=$<TARGET_FILE:xrootd>")
 list(APPEND XRDENV "CMSD=$<TARGET_FILE:cmsd>")
 
-foreach(config common metaman man1 man2 srv1 srv2 srv3 srv4)
+# If we have SciTokens, use common_scitokens_enabled.cfg; otherwise, use common.cfg
+if (BUILD_SCITOKENS AND HAVE_SCITOKEN_CONFIG_SET_STR)
+  configure_file(common_scitokens_enabled.cfg common.cfg @ONLY)
+else()
+  configure_file(common.cfg common.cfg @ONLY)
+endif()
+
+foreach(config metaman man1 man2 srv1 srv2 srv3 srv4)
   configure_file(${config}.cfg ${config}.cfg @ONLY)
 endforeach()
 
@@ -18,19 +25,19 @@ set_tests_properties(XRootD::cluster::start
   PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_SETUP XRootD_Cluster)
 
 if (BUILD_SCITOKENS AND HAVE_SCITOKEN_CONFIG_SET_STR)
-set_tests_properties(XRootD::cluster::start
-  PROPERTIES FIXTURES_REQUIRED SciTokens)
+  set_tests_properties(XRootD::cluster::start
+    PROPERTIES FIXTURES_REQUIRED SciTokens)
+
+  add_test(NAME XRootD::cluster::tpctest
+    COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/tpctest.sh")
+  set_tests_properties(XRootD::cluster::tpctest
+    PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED XRootD_Cluster RUN_SERIAL 1)
 endif()
 
 add_test(NAME XRootD::cluster::test
   COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/test.sh")
 set_tests_properties(XRootD::cluster::test
   PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED XRootD_Cluster RUN_SERIAL 1)
-
-add_test(NAME XRootD::cluster::tpctest
-  COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/tpctest.sh")
-set_tests_properties(XRootD::cluster::tpctest
-    PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED XRootD_Cluster RUN_SERIAL 1)
 
 add_test(NAME XRootD::cluster::stop
   COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/setup.sh stop")
