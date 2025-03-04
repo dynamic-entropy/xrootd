@@ -41,10 +41,10 @@ declare -A hosts=(
 )
 
 declare -A hosts_http=(
-    [srv1]="http://localhost:10943"
-    [srv2]="http://localhost:10944"
-    [srv3]="http://localhost:10945"
-    [srv4]="http://localhost:10946"
+    [srv1]="https://localhost:10943"
+    [srv2]="https://localhost:10944"
+    [srv3]="https://localhost:10945"
+    [srv4]="https://localhost:10946"
 )
 
 cleanup_files() {
@@ -57,10 +57,12 @@ cleanup_files() {
 
     for dst in "${!hosts[@]}"; do
            rm "${LCLDATADIR}/${src}_to_${dst}.dat"
-           rm "${LCLDATADIR}/${src}_to_${dst}.dat_http"
+           rm "${LCLDATADIR}/${src}_to_${dst}.dat_http_pull"
+           rm "${LCLDATADIR}/${src}_to_${dst}.dat_http_push"
 
            ${XRDFS} "${hosts[$src]}" rm "${RMTDATADIR}/${dst}_to_${src}.ref"
-           ${XRDFS} "${hosts[$src]}" rm "${RMTDATADIR}/${dst}_to_${src}.ref_http"
+           ${XRDFS} "${hosts[$src]}" rm "${RMTDATADIR}/${dst}_to_${src}.ref_http_push"
+           ${XRDFS} "${hosts[$src]}" rm "${RMTDATADIR}/${dst}_to_${src}.ref_http_pull"
     done
        
     ${XRDFS} "${hosts[$src]}" rmdir "${RMTDATADIR}"
@@ -85,11 +87,11 @@ LCLDATADIR="${PWD}/localdata/tpc"
 mkdir -p "${LCLDATADIR}"
 
 
-## TODO: Only for testing purposes
-set +e
-cleanup_files
-set -e
-mkdir -p "${LCLDATADIR}"
+## TODO: Cleanup for testing purposes
+# set +e
+# cleanup_files > /dev/null 2>&1
+# set -e
+# mkdir -p "${LCLDATADIR}"
 ## Please remove the above block after testing
 
 
@@ -115,13 +117,27 @@ perform_tpc() {
 perform_http_tpc() {
     local src=$1
     local dst=$2
+    local mode=$3
 
     local src_file_http="${hosts_http[$src]}/${RMTDATADIR}/${src}.ref"
     local dst_file_http="${hosts_http[$dst]}/${RMTDATADIR}/${src}_to_${dst}.ref_http"
 
-    ${CURL} -X COPY -L \
-    -H "Source: ${src_file_http}" \
-    "${dst_file_http}"
+    if [[ "$mode" == "push" ]]; then
+        dst_file_http="${dst_file_http}_push"
+        ${CURL} -X COPY -L \
+        -H "Destination: ${dst_file_http}" \
+        --cacert "${BINARY_DIR}"/tests/issuer/tlsca.pem \
+        "${src_file_http}"
+    elif [[ "$mode" == "pull" ]]; then
+        dst_file_http="${dst_file_http}_pull"
+        ${CURL} -X COPY -L \
+        -H "Source: ${src_file_http}" \
+        --cacert "${BINARY_DIR}"/tests/issuer/tlsca.pem \
+        "${dst_file_http}"
+    else
+        echo "ERROR: Unsupported mode: $mode"
+        exit 1
+    fi
 }
 
 download_file() {
@@ -186,7 +202,8 @@ done
 for src in "${!hosts[@]}"; do
     for dst in "${!hosts[@]}"; do     
        perform_tpc "${src}" "${dst}"
-       perform_http_tpc "${src}" "${dst}"
+       perform_http_tpc "${src}" "${dst}" "pull"
+       perform_http_tpc "${src}" "${dst}" "push"
     done
 done
 
@@ -199,7 +216,10 @@ for src in "${!hosts[@]}"; do
 
         remote_file_http="${hosts[$dst]}/${RMTDATADIR}/${src}_to_${dst}.ref_http"
         local_file_http="${LCLDATADIR}/${src}_to_${dst}.dat_http"
-        download_file "${remote_file_http}" "${local_file_http}"
+        # Download files transferred via the pull mode
+        download_file "${remote_file_http}_pull" "${local_file_http}_pull"
+        # Download files transferred via the push mode
+        download_file "${remote_file_http}_push" "${local_file_http}_push"
     done
 done
 
@@ -217,8 +237,13 @@ for src in "${!hosts[@]}"; do
         new_file_http="${LCLDATADIR}/${src}_to_${dst}.dat_http"
         remote_file_http="${hosts[$dst]}/${RMTDATADIR}/${src}_to_${dst}.ref_http"
 
-        verify_checksum "crc32c" "${ref_file_http}" "${new_file_http}" "${hosts[$dst]}" "${RMTDATADIR}/${src}_to_${dst}.ref_http"
-        verify_checksum "adler32" "${ref_file_http}" "${new_file_http}" "${hosts[$dst]}" "${RMTDATADIR}/${src}_to_${dst}.ref_http"
+        # Verify checksums for files transferred via the pull mode
+        verify_checksum "crc32c" "${ref_file_http}" "${new_file_http}_pull" "${hosts[$dst]}" "${RMTDATADIR}/${src}_to_${dst}.ref_http_pull"
+        verify_checksum "adler32" "${ref_file_http}" "${new_file_http}_pull" "${hosts[$dst]}" "${RMTDATADIR}/${src}_to_${dst}.ref_http_pull"
+
+        # Verify checksums for files transferred via the push mode
+        verify_checksum "crc32c" "${ref_file_http}" "${new_file_http}_push" "${hosts[$dst]}" "${RMTDATADIR}/${src}_to_${dst}.ref_http_push"
+        verify_checksum "adler32" "${ref_file_http}" "${new_file_http}_push" "${hosts[$dst]}" "${RMTDATADIR}/${src}_to_${dst}.ref_http_push"
     done
 done
 
