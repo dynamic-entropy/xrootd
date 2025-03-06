@@ -6,6 +6,9 @@ if (BUILD_SCITOKENS AND HAVE_SCITOKEN_CONFIG_SET_STR)
   list(APPEND XRDENV "ADLER32=$<TARGET_FILE:xrdadler32>")
   list(APPEND XRDENV "XROOTD=$<TARGET_FILE:xrootd>")
   list(APPEND XRDENV "CMSD=$<TARGET_FILE:cmsd>")
+  list(APPEND XRDENV "XRDSCITOKENS_CREATE_TOKEN=${CMAKE_BINARY_DIR}/tests/scitokens/xrdscitokens-create-token")
+  list(APPEND XRDENV "XRDSCITOKENS_ISSUER_DIR=${CMAKE_BINARY_DIR}/tests/issuer")
+  list(APPEND XRDENV "X509_CERT_FILE=${CMAKE_BINARY_DIR}/tests/issuer/tlsca.pem")
   list(APPEND XRDENV "BINARY_DIR=${CMAKE_BINARY_DIR}")
 
   foreach(config srv1 srv2 common)
@@ -16,12 +19,12 @@ if (BUILD_SCITOKENS AND HAVE_SCITOKEN_CONFIG_SET_STR)
     COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/setup.sh start")
   set_tests_properties(XRootD::tpc::start
     PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_SETUP XRootD_TPC
-               FIXTURES_REQUIRED SciTokens)
+               FIXTURES_REQUIRED XRootD::scitokens)
 
   add_test(NAME XRootD::tpc::test
     COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/test.sh")
   set_tests_properties(XRootD::tpc::test
-    PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED "XRootD_TPC;SciTokens")
+    PROPERTIES ENVIRONMENT "${XRDENV}" FIXTURES_REQUIRED "XRootD_TPC;XRootD::scitokens")
 
   add_test(NAME XRootD::tpc::teardown
     COMMAND sh -c "${CMAKE_CURRENT_SOURCE_DIR}/setup.sh teardown")

@@ -81,6 +81,7 @@ trap "cleanup" ERR
 RMTDATADIR="/srvdata/tpc"
 LCLDATADIR="${PWD}/localdata/tpc"
 mkdir -p "${LCLDATADIR}"
+mkdir -p "${PWD}/scitokens"
 
 
 ## TODO: Cleanup for testing purposes
@@ -100,6 +101,15 @@ upload_file() {
     local local_file=$1
     local remote_file=$2
     ${XRDCP} "${local_file}" "${remote_file}"
+}
+
+setup_scitokens() {
+	if ! ${XRDSCITOKENS_CREATE_TOKEN} "${XRDSCITOKENS_ISSUER_DIR}"/issuer_pub_1.pem "${XRDSCITOKENS_ISSUER_DIR}"/issuer_key_1.pem test_1 \
+		"https://localhost:7095/issuer/one" "storage.modify:/ storage.create:/ storage.read:/"> "${PWD}/scitokens/token"; then
+		echo "Failed to create token"
+		exit 1
+	fi
+	chmod 0600 "$PWD/scitokens/token"
 }
 
 perform_tpc() {
@@ -171,6 +181,10 @@ verify_checksum() {
         exit 1
     fi
 }
+
+# Set up scitokens
+setup_scitokens
+export BEARER_TOKEN_FILE="$PWD/scitokens/token"
 
 # Generate, upload, download, and verify checksums for each host
 for host in "${!hosts[@]}"; do
