@@ -30,7 +30,7 @@ void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(
     myself->Run();
 }
 
-void TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
+bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
     CURLM *multi_handle, TPCRequestManager::TPCRequest &request) {
 
     CURLMcode mres;
@@ -38,48 +38,53 @@ void TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
     if (mres) {
         std::stringstream ss;
         ss << "Failed to add transfer to libcurl multi-handle: HTTP library failure=" << curl_multi_strerror(mres);
-        request.SetDone(-1, ss.str());
-        return;
-    }
-
-        /*
-        TODO: Implement a curl multi-handle event loop
-
-    auto fp = m_oss.newFile("Prestage Worker");
-
-    ssize_t rc =
-        fp->Open(request.GetPath().c_str(), O_RDONLY, 0, request.GetEnv());
-    if (rc < 0) {
-        if (rc == -ENOENT) {
-            request.SetDone(404, "Object does not exist");
-            return;
-        } else if (rc == -EISDIR) {
-            request.SetDone(409, "Object is a directory");
-            return;
-        } else {
-            request.SetDone(500, "Unknown error when preparing for prestage");
-            return;
-        }
-    }
-    off_t off{0};
-    auto lastUpdate = std::chrono::steady_clock::now();
-    while ((rc = fp->Read(off, 64 * 1024)) > 0) {
-        off += rc;
-        if (std::chrono::steady_clock::now() - lastUpdate >
-            std::chrono::milliseconds(200)) {
-            request.SetProgress(off);
-        }
-    }
-    fp->Close();
-    if (rc < 0) {
-        std::stringstream ss;
-        ss << "I/O failure when prestaging: " << strerror(-rc);
+        m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", ss.str().c_str());
         request.SetDone(500, ss.str());
-        return;
+        return false;
     }
-    request.SetDone(200, "Prestage successful");
-*/
-    return;
+    request.SetProgress(0);
+
+    CURLcode res = static_cast<CURLcode>(-1);
+    int running_handles = 1;
+    while (true) {
+        mres = curl_multi_perform(multi_handle, &running_handles);
+        if (mres != CURLM_OK) {
+            std::stringstream ss;
+            ss << "Internal curl multi-handle error: " << curl_multi_strerror(mres);
+            m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", ss.str().c_str());
+            request.SetDone(500, ss.str());
+            return false;
+        }
+
+        CURLMsg *msg;
+        do {
+            int msgq = 0;
+            msg = curl_multi_info_read(multi_handle, &msgq);
+            if (msg && (msg->msg == CURLMSG_DONE)) {
+                CURL *easy_handle = msg->easy_handle;
+                res = msg->data.result;
+                curl_multi_remove_handle(multi_handle, easy_handle);
+            }
+        } while (msg);
+
+        mres = curl_multi_wait(multi_handle, NULL, 0, 1000, nullptr);
+        if (mres != CURLM_OK) {
+            break;
+        }
+    } while (running_handles);
+
+    if (res == static_cast<CURLcode>(-1)) { // No transfers returned?!?
+        curl_multi_remove_handle(multi_handle, request.GetHandle());
+        std::stringstream ss;
+        ss << "Internal state error in libcurl - no transfer results returned";
+        m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", ss.str().c_str());
+        request.SetDone(500, ss.str());
+        return false;
+    }
+
+    request.SetDone(res, "Transfer complete");
+    curl_multi_remove_handle(multi_handle, request.GetHandle());
+    return true;
 }
 
 void TPCRequestManager::TPCQueue::TPCWorker::Run() {
@@ -103,7 +108,11 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
                 break;
             }
         }
-        RunCurl(multi_handle, *request);
+        if (!RunCurl(multi_handle, *request)) {
+            m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", "Worker's multi-handle"
+                " caused an internal error.  Worker immediately exiting");
+            m_queue.Done(this);
+        }
     }
 
     m_queue.m_parent.m_log.Log(LogMask::Info, "TPCWorker", "Worker for",
@@ -218,6 +227,9 @@ TPCRequestManager::TPCQueue::ConsumeUntil(
 }
 
 void TPCRequestManager::TPCRequest::SetProgress(off_t offset) {
+    if (offset == 0) {
+        m_active.store(true, std::memory_order_relaxed);
+    }
     m_progress_offset.store(offset, std::memory_order_relaxed);
 }
 
