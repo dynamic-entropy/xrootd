@@ -6,6 +6,12 @@
 #include <shared_mutex>
 #include <string>
 #include <vector>
+#include <condition_variable>
+#include <unordered_map>
+#include <atomic>
+#include <memory>
+#include <algorithm>
+#include <sstream>
 
 #include <curl/curl.h>
 

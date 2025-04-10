@@ -1,6 +1,5 @@
 
 #include <algorithm>
-#include <sstream>
 #include <stdexcept>
 
 #include "XrdVersion.hh"

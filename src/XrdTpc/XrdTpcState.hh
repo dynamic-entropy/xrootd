@@ -7,6 +7,7 @@
 #define __XRD_TPC_STATE_HH__
 
 #include <memory>
+#include <sstream>
 #include <vector>
 
 // Forward dec'ls
