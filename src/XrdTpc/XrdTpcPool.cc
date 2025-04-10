@@ -5,6 +5,8 @@
 #include <XrdOuc/XrdOucEnv.hh>
 #include <XrdSys/XrdSysError.hh>
 
+#include <algorithm>
+#include <sstream>
 #include <string>
 #include <thread>
 
