@@ -36,6 +36,7 @@ if( BUILD_TPC )
     XrdTpc/XrdTpcConfigure.cc
     XrdTpc/XrdTpcMultistream.cc
     XrdTpc/XrdTpcCurlMulti.cc     XrdTpc/XrdTpcCurlMulti.hh
+    XrdTpc/XrdTpcPool.cc          XrdTpc/XrdTpcPool.hh
     XrdTpc/XrdTpcState.cc         XrdTpc/XrdTpcState.hh
     XrdTpc/XrdTpcStream.cc        XrdTpc/XrdTpcStream.hh
     XrdTpc/XrdTpcTPC.cc           XrdTpc/XrdTpcTPC.hh
