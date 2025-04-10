@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <curl/curl.h>
+
 // Forward dec'ls
 class XrdOucEnv;
 class XrdSysError;
@@ -30,19 +32,19 @@ class TPCRequestManager final {
 
     class TPCRequest {
       public:
-        TPCRequest(const std::string &ident, CURL *handle,
-                        XrdOucEnv &env)
-            : m_ident(ident), m_curl(handle), m_env(env) {}
+        TPCRequest(const std::string &ident, CURL *handle)
+            : m_ident(ident), m_curl(handle) {}
 
         int WaitFor(std::chrono::steady_clock::duration);
 
-        XrdOucEnv &GetEnv() const { return m_env; }
         CURL *GetHandle() const { return m_curl; }
         void SetProgress(off_t offset);
         void SetDone(int status, const std::string &msg);
         const std::string &GetIdentifier() const { return m_ident; }
         bool IsActive() const {
             return m_active.load(std::memory_order_relaxed);
+        }
+        void Cancel() { // TODO: implement.
         }
         std::string GetResults() const { return m_message; }
         off_t GetProgress() const {
@@ -58,7 +60,6 @@ class TPCRequestManager final {
         std::condition_variable m_cv;
         std::mutex m_mutex;
         std::string m_message;
-        XrdOucEnv &m_env;
     };
 
     TPCRequestManager(XrdOucEnv &xrdEnv, XrdSysError &eDest);
@@ -100,7 +101,7 @@ class TPCRequestManager final {
             std::condition_variable m_cv;
 
           private:
-            void RunCurl(CURLM *multi_handle, TPCRequest &request);
+            bool RunCurl(CURLM *multi_handle, TPCRequest &request);
 
             bool m_idle{false};
             const std::string m_label;
