@@ -62,7 +62,6 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
             int msgq = 0;
             msg = curl_multi_info_read(multi_handle, &msgq);
             if (msg && (msg->msg == CURLMSG_DONE)) {
-                CURL *easy_handle = msg->easy_handle;
                 res = msg->data.result;
                 break;
             }

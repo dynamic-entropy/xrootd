@@ -568,6 +568,7 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
                 "Failed to send the initial response to the TPC client");
             return retval;
         }
+        return -1;
     }
 
     // Start response to client prior to the first call to curl_multi_perform
@@ -588,7 +589,12 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
     time_t transfer_start = last_advance_time;
     CURLcode res = static_cast<CURLcode>(-1);
     int status;
-    while ((status = request.WaitFor(std::chrono::seconds(m_marker_period))) <= 0) {
+
+    // The transfer will start after this point, notify the packet marking manager
+    rec.pmarkManager.startTransfer();
+    rec.pmarkManager.beginPMarks();
+
+    while ((status = request.WaitFor(std::chrono::seconds(m_marker_period))) < 0) {
         auto now = time(NULL);
         off_t bytes_xfer = state.BytesTransferred();
         if (bytes_xfer > last_advance_bytes) {
@@ -613,8 +619,6 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
                             : "transmitted to the destination (push mode) in ") << timeout << " seconds.";
             state.SetErrorMessage(ss.str());
         }
-        // The transfer will start after this point, notify the packet marking manager
-        rec.pmarkManager.startTransfer();
         rec.pmarkManager.beginPMarks();
     }
 
