@@ -31,8 +31,18 @@ void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(
 }
 
 void TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
-    TPCRequestManager::TPCRequest &request) {
-/*
+    CURLM *multi_handle, TPCRequestManager::TPCRequest &request) {
+
+    CURLMcode mres;
+    mres = curl_multi_add_handle(multi_handle, request.GetHandle());
+    if (mres) {
+        std::stringstream ss;
+        ss << "Failed to add transfer to libcurl multi-handle: HTTP library failure=" << curl_multi_strerror(mres);
+        request.SetDone(-1, ss.str());
+        return;
+    }
+
+        /*
         TODO: Implement a curl multi-handle event loop
 
     auto fp = m_oss.newFile("Prestage Worker");
@@ -76,6 +86,15 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
     m_queue.m_parent.m_log.Log(LogMask::Info, "TPCWorker", "Worker for",
                                m_queue.m_label.c_str(), "starting");
 
+
+    // Create the multi-handle and add in the current transfer to it.
+    CURLM *multi_handle = curl_multi_init();
+    if (!multi_handle) {
+        m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", "Unable to create"
+            " a libcurl multi-handle; fatal error for worker");
+        m_queue.Done(this);
+    }
+
     while (true) {
         auto request = m_queue.TryConsume();
         if (!request) {
@@ -84,7 +103,7 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
                 break;
             }
         }
-        RunCurl(*request);
+        RunCurl(multi_handle, *request);
     }
 
     m_queue.m_parent.m_log.Log(LogMask::Info, "TPCWorker", "Worker for",
