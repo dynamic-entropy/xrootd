@@ -30,14 +30,14 @@ class TPCRequestManager final {
 
     class TPCRequest {
       public:
-        TPCRequest(const std::string &ident, const std::string &path,
+        TPCRequest(const std::string &ident, CURL *handle,
                         XrdOucEnv &env)
-            : m_ident(ident), m_path(path), m_env(env) {}
+            : m_ident(ident), m_curl(handle), m_env(env) {}
 
         int WaitFor(std::chrono::steady_clock::duration);
 
         XrdOucEnv &GetEnv() const { return m_env; }
-        std::string GetPath() const { return m_path; }
+        CURL *GetHandle() const { return m_curl; }
         void SetProgress(off_t offset);
         void SetDone(int status, const std::string &msg);
         const std::string &GetIdentifier() const { return m_ident; }
@@ -54,7 +54,7 @@ class TPCRequestManager final {
         int m_status{-1};
         std::atomic<off_t> m_progress_offset{0};
         std::string m_ident;
-        std::string m_path;
+        CURL *m_curl;
         std::condition_variable m_cv;
         std::mutex m_mutex;
         std::string m_message;
@@ -100,7 +100,7 @@ class TPCRequestManager final {
             std::condition_variable m_cv;
 
           private:
-            void RunCurl(TPCRequest &request);
+            void RunCurl(CURLM *multi_handle, TPCRequest &request);
 
             bool m_idle{false};
             const std::string m_label;
