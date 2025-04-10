@@ -46,9 +46,10 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
 
     CURLcode res = static_cast<CURLcode>(-1);
     int running_handles = 1;
-    while (true) {
+    do {
         mres = curl_multi_perform(multi_handle, &running_handles);
         if (mres != CURLM_OK) {
+            curl_multi_remove_handle(multi_handle, request.GetHandle());
             std::stringstream ss;
             ss << "Internal curl multi-handle error: " << curl_multi_strerror(mres);
             m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", ss.str().c_str());
@@ -63,13 +64,13 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
             if (msg && (msg->msg == CURLMSG_DONE)) {
                 CURL *easy_handle = msg->easy_handle;
                 res = msg->data.result;
-                curl_multi_remove_handle(multi_handle, easy_handle);
+                break;
             }
         } while (msg);
 
         mres = curl_multi_wait(multi_handle, NULL, 0, 1000, nullptr);
         if (mres != CURLM_OK) {
-            break;
+            break; // TODO: Handle this error
         }
     } while (running_handles);
 
@@ -82,8 +83,8 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
         return false;
     }
 
-    request.SetDone(res, "Transfer complete");
     curl_multi_remove_handle(multi_handle, request.GetHandle());
+    request.SetDone(res, "Transfer complete");
     return true;
 }
 
@@ -98,6 +99,7 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
         m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", "Unable to create"
             " a libcurl multi-handle; fatal error for worker");
         m_queue.Done(this);
+        return;
     }
 
     while (true) {
@@ -112,6 +114,7 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
             m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", "Worker's multi-handle"
                 " caused an internal error.  Worker immediately exiting");
             m_queue.Done(this);
+            return;
         }
     }
 
