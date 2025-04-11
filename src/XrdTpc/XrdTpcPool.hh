@@ -12,7 +12,7 @@
 #include <vector>
 
 #include <curl/curl.h>
-
+#include "XrdTpcPMarkManager.hh"
 // Forward dec'ls
 class XrdOucEnv;
 class XrdSysError;
@@ -103,6 +103,9 @@ class TPCRequestManager final {
             bool IsIdle() const { return m_idle; }
             void SetIdle(bool idle) { m_idle = idle; }
             std::condition_variable m_cv;
+    
+            static int closesocket_callback(void *clientp, curl_socket_t fd);
+            static int opensocket_callback(void *clientp, curlsocktype purpose, struct curl_sockaddr *address);
 
           private:
             bool RunCurl(CURLM *multi_handle, TPCRequest &request);
@@ -110,8 +113,10 @@ class TPCRequestManager final {
             bool m_idle{false};
             const std::string m_label;
             TPCQueue &m_queue;
+            XrdTpc::PMarkManager pmarkManager;
         };
 
+        static const long CONNECT_TIMEOUT = 60;
         bool m_done{false};
         const std::string m_label;
         std::vector<std::unique_ptr<TPCWorker>> m_workers;
