@@ -188,10 +188,13 @@ perform_http_tpc() {
     local src_file_http="${hosts_http[$src]}/${RMTDATADIR}/${src}${file_suffix}.ref"
     local dst_file_http="${hosts_http[$dst]}/${RMTDATADIR}/${src}_to_${dst}${file_suffix}.ref_http"
     local http_code
+    local result_line
+    local body_file
+    body_file=$(mktemp)
 
     if [[ "$mode" == "push" ]]; then
         dst_file_http="${dst_file_http}_push"
-        http_code=$(${CURL} -X COPY -L -s -o >(cat >&2) -w "%{http_code}" \
+        http_code=$(${CURL} -X COPY -L -s -o "$body_file" -w "%{http_code}" \
             -H "Destination: ${dst_file_http}" \
             -H "Authorization: Bearer ${token_dst}" \
             -H "TransferHeaderAuthorization: Bearer ${token_src}" \
@@ -199,7 +202,7 @@ perform_http_tpc() {
             "${src_file_http}")
     elif [[ "$mode" == "pull" ]]; then
         dst_file_http="${dst_file_http}_pull"
-        http_code=$(${CURL} -X COPY -L -s -o >(cat >&2) -w "%{http_code}" \
+        http_code=$(${CURL} -X COPY -L -s -o "$body_file" -w "%{http_code}" \
             -H "Source: ${src_file_http}" \
             -H "Authorization: Bearer ${token_src}" \
             -H "TransferHeaderAuthorization: Bearer ${token_dst}" \
@@ -207,6 +210,15 @@ perform_http_tpc() {
             "${dst_file_http}")
     else
         echo "ERROR: Unsupported mode: $mode" >&2
+        rm -f "$body_file"
+        return 1
+    fi
+
+    result_line=$(tail -n1 "$body_file")
+    rm -f "$body_file"
+
+    if [[ "$result_line" != "Created" ]]; then
+        echo "Transfer failed: $result_line" >&2
         return 1
     fi
 
