@@ -89,87 +89,6 @@ void CurlDeleter::operator()(CURL *curl)
 }
 
 /******************************************************************************/
-/*           s o c k o p t _ s e t c l o e x e c _ c a l l b a c k            */
-/******************************************************************************/
-  
-/**
- * The callback that will be called by libcurl when the socket has been created
- * https://curl.se/libcurl/c/CURLOPT_SOCKOPTFUNCTION.html
- *
- * Note: that this callback has been replaced by the opensocket_callback as it
- *       was needed for monitoring to report what IP protocol was being used.
- *       It has been kept in case we will need this callback in the future.
- */
-int TPCHandler::sockopt_callback(void *clientp, curl_socket_t curlfd, curlsocktype purpose) {
-  TPCLogRecord * rec = (TPCLogRecord *)clientp;
-  if (purpose == CURLSOCKTYPE_IPCXN && rec && rec->pmarkManager.isEnabled()) {
-      // We will not reach this callback if the corresponding socket could not have been connected
-      // the socket is already connected only if the packet marking is enabled
-      return CURL_SOCKOPT_ALREADY_CONNECTED;
-  }
-  return CURL_SOCKOPT_OK;
-}
-
-/******************************************************************************/
-/*                   o p e n s o c k e t _ c a l l b a c k                    */
-/******************************************************************************/
-  
-  
-/**
- * The callback that will be called by libcurl when the socket is about to be
- * opened so we can capture the protocol that will be used.
- */
-int TPCHandler::opensocket_callback(void *clientp,
-                                    curlsocktype purpose,
-                                    struct curl_sockaddr *aInfo)
-{
-  /* CURLSOCKTYPE_IPCXN (for IP based connections) is the only type currently known by curl,
-   * so let's make sure to reject other types if they appear in the furure */
-  if (purpose != CURLSOCKTYPE_IPCXN)
-    return CURL_SOCKET_BAD;
-
-  if (!aInfo)
-    return CURL_SOCKET_BAD;
-
-  // Create the socket (note that O_CLOEXEC flag will be set)
-  int fd = XrdSysFD_Socket(aInfo->family, aInfo->socktype, aInfo->protocol);
-
-  if (fd < 0) {
-    return CURL_SOCKET_BAD;
-  }
-
-  if (!clientp)
-    return fd;
-
-  XrdNetAddr thePeer(&(aInfo->addr));
-  TPCLogRecord *rec = static_cast<TPCLogRecord*>(clientp);
-
-  /* Reject attempts to connect to local/private addresses unless allowed by configuration */
-  if ((!rec->allow_private && thePeer.isPrivate()) || (!rec->allow_local && thePeer.isLocal())) {
-    rec->tpc_status = 403; // Forbidden
-    rec->m_log->Emsg(rec->log_prefix.c_str(),
-      "Connection to local/private address is forbidden");
-    close(fd);
-    return CURL_SOCKET_BAD;
-  }
-
-  rec->isIPv6 = (thePeer.isIPType(XrdNetAddrInfo::IPv6) && !thePeer.isMapped());
-
-  std::stringstream connectErrMsg;
-  if(!rec->pmarkManager.connect(fd, &(aInfo->addr), aInfo->addrlen, CONNECT_TIMEOUT, connectErrMsg)) {
-    // at this point fd has already been closed
-    rec->m_log->Emsg(rec->log_prefix.c_str(), "Unable to connect socket: ", connectErrMsg.str().c_str());
-    return CURL_SOCKET_BAD;
-  }
-
-  return fd;
-}
-
-int TPCHandler::closesocket_callback(void *clientp, curl_socket_t fd) {
-  return close(fd);
-}
-
-/******************************************************************************/
 /*           s s l _ c t x _ c a l l b a c k                                  */
 /******************************************************************************/
 
@@ -966,11 +885,6 @@ int TPCHandler::ProcessPushReq(const std::string & resource, XrdHttpExtReq &req)
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS, protocols);
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, protocols);
 #endif
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
-    curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT);
 
     auto query_header = XrdOucTUtils::caseInsensitiveFind(req.headers,"xrd-http-fullresource");
@@ -1092,12 +1006,6 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS, protocols);
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, protocols);
 #endif
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
-    curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
-    curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA , &rec);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT);
     std::unique_ptr<XrdSfsFile> fh(m_sfs->newFile(name, m_monid++));
     if (!fh.get()) {
