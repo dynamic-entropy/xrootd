@@ -97,15 +97,15 @@ void CurlDeleter::operator()(CURL *curl)
  *       was needed for monitoring to report what IP protocol was being used.
  *       It has been kept in case we will need this callback in the future.
  */
-int TPCHandler::sockopt_callback(void *clientp, curl_socket_t curlfd, curlsocktype purpose) {
-  TPCLogRecord * rec = (TPCLogRecord *)clientp;
-  if (purpose == CURLSOCKTYPE_IPCXN && rec && rec->pmarkManager.isEnabled()) {
-      // We will not reach this callback if the corresponding socket could not have been connected
-      // the socket is already connected only if the packet marking is enabled
-      return CURL_SOCKOPT_ALREADY_CONNECTED;
-  }
-  return CURL_SOCKOPT_OK;
-}
+// int TPCHandler::sockopt_callback(void *clientp, curl_socket_t curlfd, curlsocktype purpose) {
+//   TPCLogRecord * rec = (TPCLogRecord *)clientp;
+//   if (purpose == CURLSOCKTYPE_IPCXN && rec && rec->pmarkManager.isEnabled()) {
+//       // We will not reach this callback if the corresponding socket could not have been connected
+//       // the socket is already connected only if the packet marking is enabled
+//       return CURL_SOCKOPT_ALREADY_CONNECTED;
+//   }
+//   return CURL_SOCKOPT_OK;
+// }
 
 /******************************************************************************/
 /*                   o p e n s o c k e t _ c a l l b a c k                    */
@@ -116,43 +116,43 @@ int TPCHandler::sockopt_callback(void *clientp, curl_socket_t curlfd, curlsockty
  * The callback that will be called by libcurl when the socket is about to be
  * opened so we can capture the protocol that will be used.
  */
-int TPCHandler::opensocket_callback(void *clientp,
-                                    curlsocktype purpose,
-                                    struct curl_sockaddr *aInfo)
-{
-  //Return a socket file descriptor (note the clo_exec flag will be set).
-  int fd = XrdSysFD_Socket(aInfo->family, aInfo->socktype, aInfo->protocol);
-  // See what kind of address will be used to connect
-  //
-  if(fd < 0) {
-    return CURL_SOCKET_BAD;
-  }
-  TPCLogRecord * rec = (TPCLogRecord *)clientp;
-  if (purpose == CURLSOCKTYPE_IPCXN && clientp)
-  {XrdNetAddr thePeer(&(aInfo->addr));
-    rec->isIPv6 =  (thePeer.isIPType(XrdNetAddrInfo::IPv6)
-                    && !thePeer.isMapped());
-    std::stringstream connectErrMsg;
+// int TPCHandler::opensocket_callback(void *clientp,
+//                                     curlsocktype purpose,
+//                                     struct curl_sockaddr *aInfo)
+// {
+//   //Return a socket file descriptor (note the clo_exec flag will be set).
+//   int fd = XrdSysFD_Socket(aInfo->family, aInfo->socktype, aInfo->protocol);
+//   // See what kind of address will be used to connect
+//   //
+//   if(fd < 0) {
+//     return CURL_SOCKET_BAD;
+//   }
+//   TPCLogRecord * rec = (TPCLogRecord *)clientp;
+//   if (purpose == CURLSOCKTYPE_IPCXN && clientp)
+//   {XrdNetAddr thePeer(&(aInfo->addr));
+//     rec->isIPv6 =  (thePeer.isIPType(XrdNetAddrInfo::IPv6)
+//                     && !thePeer.isMapped());
+//     std::stringstream connectErrMsg;
 
-    if(!rec->pmarkManager.connect(fd, &(aInfo->addr), aInfo->addrlen, CONNECT_TIMEOUT, connectErrMsg)) {
-      rec->m_log->Emsg(rec->log_prefix.c_str(),"Unable to connect socket:", connectErrMsg.str().c_str());
-      return CURL_SOCKET_BAD;
-    }
-  }
+//     if(!rec->pmarkManager.connect(fd, &(aInfo->addr), aInfo->addrlen, CONNECT_TIMEOUT, connectErrMsg)) {
+//       rec->m_log->Emsg(rec->log_prefix.c_str(),"Unable to connect socket:", connectErrMsg.str().c_str());
+//       return CURL_SOCKET_BAD;
+//     }
+//   }
 
-  return fd;
-}
+//   return fd;
+// }
 
-int TPCHandler::closesocket_callback(void *clientp, curl_socket_t fd) {
-  TPCLogRecord * rec = (TPCLogRecord *)clientp;
+// int TPCHandler::closesocket_callback(void *clientp, curl_socket_t fd) {
+//   TPCLogRecord * rec = (TPCLogRecord *)clientp;
 
-  // Destroy the PMark handle associated to the file descriptor before closing it.
-  // Otherwise, we would lose the socket usage information if the socket is closed before
-  // the PMark handle is closed.
-  rec->pmarkManager.endPmark(fd);
+//   // Destroy the PMark handle associated to the file descriptor before closing it.
+//   // Otherwise, we would lose the socket usage information if the socket is closed before
+//   // the PMark handle is closed.
+//   rec->pmarkManager.endPmark(fd);
 
-  return close(fd);
-}
+//   return close(fd);
+// }
 
 /******************************************************************************/
 /*                            p r e p a r e U R L                             */
@@ -701,10 +701,10 @@ int TPCHandler::ProcessPushReq(const std::string & resource, XrdHttpExtReq &req)
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, (long) CURL_HTTP_VERSION_1_1);
 //  curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_setcloexec_callback);
 
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
+    // curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
     // curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
     // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
-    curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
+    // curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
     // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT);
     curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
@@ -820,7 +820,7 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
 //  curl_easy_setopt(curl,CURLOPT_SOCKOPTFUNCTION,sockopt_setcloexec_callback);
     // curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
     // curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
-    curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
+    // curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA , &rec);
     // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
     // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
