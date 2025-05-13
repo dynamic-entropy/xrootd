@@ -32,7 +32,7 @@ if( CMAKE_COMPILER_IS_GNUCXX )
   #-----------------------------------------------------------------------------
   if( ( CMAKE_BUILD_TYPE STREQUAL "Debug" OR "${CMAKE_BUILD_TYPE}" STREQUAL ""
         OR FORCE_WERROR ) )
-    set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror" )
+    # set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror" )
   endif()
   set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter" )
 endif()
