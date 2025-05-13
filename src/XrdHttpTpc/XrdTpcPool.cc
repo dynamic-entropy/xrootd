@@ -4,6 +4,7 @@
 
 #include <XrdOuc/XrdOucEnv.hh>
 #include <XrdSys/XrdSysError.hh>
+#include "XrdSys/XrdSysFD.hh"
 
 #include <algorithm>
 #include <sstream>
@@ -36,7 +37,13 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
     CURLM *multi_handle, TPCRequestManager::TPCRequest &request) {
 
     CURLMcode mres;
-    mres = curl_multi_add_handle(multi_handle, request.GetHandle());
+    auto curl = request.GetHandle();
+    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
+    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, this);
+    curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
+    curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, this);
+
+    mres = curl_multi_add_handle(multi_handle, curl);
     if (mres) {
         std::stringstream ss;
         ss << "Failed to add transfer to libcurl multi-handle: HTTP library failure=" << curl_multi_strerror(mres);
@@ -124,8 +131,40 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
     m_queue.Done(this);
 }
 
+
+int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(void *clientp, curl_socket_t fd) {
+              
+    TPCWorker * tpcWorker = (TPCWorker *)clientp;
+    tpcWorker->pmarkManager.endPmark(fd);
+    return close(fd);
+  }
+
+int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(void *clientp, curlsocktype purpose, struct curl_sockaddr *address){
+    //Return a socket file descriptor (note the clo_exec flag will be set).
+    int fd = XrdSysFD_Socket(address->family, address->socktype, address->protocol);
+    // See what kind of address will be used to connect
+    //
+    if(fd < 0) {
+      return CURL_SOCKET_BAD;
+    }
+    TPCWorker * tpcWorker = (TPCWorker *)clientp;
+    if (purpose == CURLSOCKTYPE_IPCXN && clientp)
+    {XrdNetAddr thePeer(&(address->addr));
+    //   rec->isIPv6 =  (thePeer.isIPType(XrdNetAddrInfo::IPv6)
+    //                   && !thePeer.isMapped());
+      std::stringstream connectErrMsg;
+  
+      if(!tpcWorker->pmarkManager.connect(fd, &(address->addr), address->addrlen, CONNECT_TIMEOUT, connectErrMsg)) {
+        tpcWorker->m_queue.m_parent.m_log.Emsg("TPCWorker:","Unable to connect socket:", connectErrMsg.str().c_str());
+        return CURL_SOCKET_BAD;
+      }
+    }
+  
+    return fd;
+  }
+
 void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
-    std::unique_lock lock(m_mutex);
+    std::unique_lock<std::mutex> lock(m_mutex);
     m_done = true;
     auto it = std::remove_if(m_workers.begin(), m_workers.end(), [&](std::unique_ptr<TPCWorker> &other) {
         return other.get() == worker;
@@ -141,7 +180,7 @@ void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
 void TPCRequestManager::Done(const std::string &ident) {
     m_log.Log(LogMask::Info, "TPCRequestManager", "Worker pool",
               ident.c_str(), "is idle and all workers have exited.");
-    std::unique_lock lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
 
     auto iter = m_pool_map.find(ident);
     if (iter != m_pool_map.end()) {
@@ -165,7 +204,7 @@ void TPCRequestManager::Done(const std::string &ident) {
 //   potentially exit due to lack of work.  This is done to reduce the number of
 //   "mostly idle" workers in the thread pool.
 bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
-    std::unique_lock lk{m_mutex};
+    std::unique_lock<std::mutex> lk(m_mutex);
     if (m_ops.size() == m_max_pending_ops) {
         m_parent.m_log.Log(LogMask::Warning, "TPCQueue",
                            "Queue is full; rejecting request");
@@ -239,7 +278,7 @@ void TPCRequestManager::TPCRequest::SetProgress(off_t offset) {
 
 void TPCRequestManager::TPCRequest::SetDone(int status,
                                                       const std::string &msg) {
-    std::unique_lock lock(m_mutex);
+    std::unique_lock<std::mutex> lock(m_mutex);
     m_status = status;
     m_message = msg;
     m_cv.notify_one();
@@ -247,7 +286,7 @@ void TPCRequestManager::TPCRequest::SetDone(int status,
 
 int TPCRequestManager::TPCRequest::WaitFor(
     std::chrono::steady_clock::duration dur) {
-    std::unique_lock lock(m_mutex);
+    std::unique_lock<std::mutex> lock(m_mutex);
     m_cv.wait_for(lock, dur, [&] { return m_status >= 0; });
 
     return m_status;
@@ -276,7 +315,7 @@ bool TPCRequestManager::Produce(
     // get the lock and remove itself from the map).
     while (true) {
         m_mutex.lock_shared();
-        std::lock_guard guard{m_mutex, std::adopt_lock};
+        std::lock_guard<std::shared_mutex> guard{m_mutex, std::adopt_lock};
         auto iter = m_pool_map.find(handler.GetIdentifier());
         if (iter != m_pool_map.end()) {
             queue = iter->second;
@@ -290,7 +329,7 @@ bool TPCRequestManager::Produce(
         auto created_queue = false;
         std::string queue_name = "";
         {
-            std::lock_guard guard(m_mutex);
+            std::lock_guard<std::shared_mutex> guard(m_mutex);
             auto iter = m_pool_map.find(handler.GetIdentifier());
             if (iter == m_pool_map.end()) {
                 queue = std::make_shared<TPCQueue>(handler.GetIdentifier(),

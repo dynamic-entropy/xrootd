@@ -66,7 +66,7 @@ private:
     struct TPCLogRecord {
 
         TPCLogRecord(XrdHttpExtReq & req, const TpcType tpcType) : bytes_transferred( -1 ), status( -1 ),
-                         tpc_status(-1), streams( 1 ), isIPv6(false), mReq(req), pmarkManager(mReq,tpcType), mTpcType(tpcType)
+                         tpc_status(-1), streams( 1 ), isIPv6(false), mReq(req), mTpcType(tpcType)
         {
          gettimeofday(&begT, 0); // Set effective start time
         }

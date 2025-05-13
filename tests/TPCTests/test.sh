@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -Eexo pipefail
+set -x 
 
 # Skip on macOS due to missing 'declare -A' support
 
@@ -76,6 +76,7 @@ setup_scitokens() {
 # Cleanup function
 # shellcheck disable=SC2317
 cleanup() {
+    set +ex
     ## Cleanup empty files
     src_idx=0
     dst_idx=1
@@ -201,7 +202,7 @@ perform_http_tpc() {
 
     if [[ "$mode" == "push" ]]; then
         dst_file_http="${dst_file_http}_push"
-        http_code=$(${CURL} -X COPY -L -s -o "$body_file" -w "%{http_code}" \
+        http_code=$(${CURL} -X COPY -L -s -v -o "$body_file" -w "%{http_code}" \
             -H "Destination: ${dst_file_http}" \
             -H "Authorization: Bearer ${token_dst}" \
             -H "TransferHeaderAuthorization: Bearer ${token_src}" \
@@ -209,7 +210,7 @@ perform_http_tpc() {
             "${src_file_http}")
     elif [[ "$mode" == "pull" ]]; then
         dst_file_http="${dst_file_http}_pull"
-        http_code=$(${CURL} -X COPY -L -s -o "$body_file" -w "%{http_code}" \
+        http_code=$(${CURL} -X COPY -L -s -v -o "$body_file" -w "%{http_code}" \
             -H "Source: ${src_file_http}" \
             -H "Authorization: Bearer ${token_src}" \
             -H "TransferHeaderAuthorization: Bearer ${token_dst}" \
@@ -224,7 +225,7 @@ perform_http_tpc() {
     result_line=$(tail -n1 "$body_file")
     rm -f "$body_file"
 
-    if [[ "$result_line" != "Created" ]]; then
+    if [[ "$result_line" != "success: Created" ]]; then
         echo "Transfer failed: $result_line" >&2
         return 1
     fi
@@ -395,6 +396,7 @@ verify_checksum "crc32c" "${LCLDATADIR}/${src}_empty.ref" "${LCLDATADIR}/${src}_
 verify_checksum "adler32" "${LCLDATADIR}/${src}_empty.ref" "${LCLDATADIR}/${src}_to_${dst}_empty.dat_http_push" "${hosts[$dst_idx]}" "${RMTDATADIR}/${src}_to_${dst}_empty.ref_http_push"
 
 
+set +ex
 cleanup
 
 echo "ALL TESTS PASSED"

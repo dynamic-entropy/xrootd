@@ -585,13 +585,12 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
     time_t last_advance_time = time(NULL);
     time_t transfer_start = last_advance_time;
     CURLcode res = static_cast<CURLcode>(-1);
-    int status;
 
     // The transfer will start after this point, notify the packet marking manager
-    rec.pmarkManager.startTransfer();
-    rec.pmarkManager.beginPMarks();
+    // rec.pmarkManager.startTransfer();
+    // rec.pmarkManager.beginPMarks();
 
-    while ((status = request.WaitFor(std::chrono::seconds(m_marker_period))) < 0) {
+    while ((res = (CURLcode)request.WaitFor(std::chrono::seconds(m_marker_period))) < 0) {
         auto now = time(NULL);
         off_t bytes_xfer = state.BytesTransferred();
         if (bytes_xfer > last_advance_bytes) {
@@ -616,7 +615,7 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
                             : "transmitted to the destination (push mode) in ") << timeout << " seconds.";
             state.SetErrorMessage(ss.str());
         }
-        rec.pmarkManager.beginPMarks();
+        // rec.pmarkManager.beginPMarks();
     }
 
     state.Flush();
@@ -703,11 +702,12 @@ int TPCHandler::ProcessPushReq(const std::string & resource, XrdHttpExtReq &req)
 //  curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_setcloexec_callback);
 
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
+    // curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
+    // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
+    // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT);
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
     auto query_header = XrdOucTUtils::caseInsensitiveFind(req.headers,"xrd-http-fullresource");
     std::string redirect_resource = req.resource;
     if (query_header != req.headers.end()) {
@@ -818,12 +818,12 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1);
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, (long) CURL_HTTP_VERSION_1_1);
 //  curl_easy_setopt(curl,CURLOPT_SOCKOPTFUNCTION,sockopt_setcloexec_callback);
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
+    // curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
+    // curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA , &rec);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
+    // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
+    // curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT);
     std::unique_ptr<XrdSfsFile> fh(m_sfs->newFile(name, m_monid++));
     if (!fh.get()) {
