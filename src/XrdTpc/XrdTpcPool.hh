@@ -107,13 +107,15 @@ class TPCRequestManager final {
             static int closesocket_callback(void *clientp, curl_socket_t fd);
             static int opensocket_callback(void *clientp, curlsocktype purpose, struct curl_sockaddr *address);
 
+            std::string getLabel() const { return m_label; }
+
           private:
             bool RunCurl(CURLM *multi_handle, TPCRequest &request);
 
             bool m_idle{false}; // State when worker has no requests to process but is alive
             const std::string m_label; // Label for the worker
             TPCQueue &m_queue; // Reference to the queue this worker is processing
-            XrdTpc::PMarkManager pmarkManager;
+            // XrdTpc::PMarkManager pmarkManager;
         };
 
         static const long CONNECT_TIMEOUT = 60;

@@ -1,17 +1,18 @@
-
 #include "XrdTpcPool.hh"
-#include "XrdTpcTPC.hh"
+
+#include <fcntl.h>
+#include <netinet/in.h>
 
 #include <XrdOuc/XrdOucEnv.hh>
 #include <XrdSys/XrdSysError.hh>
-#include "XrdSys/XrdSysFD.hh"
-
 #include <algorithm>
 #include <sstream>
 #include <string>
 #include <thread>
 
-#include <fcntl.h>
+#include "XrdSys/XrdSysFD.hh"
+#include "XrdTpcTPC.hh"
+#include <arpa/inet.h>
 
 using namespace TPC;
 
@@ -131,37 +132,74 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
     m_queue.Done(this);
 }
 
+int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(
+      void *clientp, curl_socket_t fd) {
+	TPCWorker *tpcWorker = (TPCWorker *)clientp;
+	std::fprintf(stderr, "closesocket_callback: %d :: %s\n", fd, tpcWorker->getLabel().c_str());
+	// tpcWorker->pmarkManager.endPmark(fd);
+  	return close(fd);
+}
+std::string format_sockaddr(const struct curl_sockaddr *address) {
+    char ipstr[INET6_ADDRSTRLEN] = {0};
+    uint16_t port = 0;
 
-int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(void *clientp, curl_socket_t fd) {
-              
-    TPCWorker * tpcWorker = (TPCWorker *)clientp;
-    tpcWorker->pmarkManager.endPmark(fd);
-    return close(fd);
-  }
+    if (!address) {
+        return "<null address>";
+    }
 
-int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(void *clientp, curlsocktype purpose, struct curl_sockaddr *address){
-    //Return a socket file descriptor (note the clo_exec flag will be set).
-    int fd = XrdSysFD_Socket(address->family, address->socktype, address->protocol);
-    // See what kind of address will be used to connect
-    //
-    if(fd < 0) {
-      return CURL_SOCKET_BAD;
+    switch (address->family) {
+        case AF_INET: {
+            const sockaddr_in *addr4 = (const sockaddr_in *)&address->addr;
+            inet_ntop(AF_INET, &addr4->sin_addr, ipstr, sizeof(ipstr));
+            port = ntohs(addr4->sin_port);
+            break;
+        }
+        case AF_INET6: {
+            const sockaddr_in6 *addr6 = (const sockaddr_in6 *)&address->addr;
+            inet_ntop(AF_INET6, &addr6->sin6_addr, ipstr, sizeof(ipstr));
+            port = ntohs(addr6->sin6_port);
+            break;
+        }
+        default:
+            return "<unknown address family>";
     }
-    TPCWorker * tpcWorker = (TPCWorker *)clientp;
-    if (purpose == CURLSOCKTYPE_IPCXN && clientp)
-    {XrdNetAddr thePeer(&(address->addr));
-    //   rec->isIPv6 =  (thePeer.isIPType(XrdNetAddrInfo::IPv6)
-    //                   && !thePeer.isMapped());
-      std::stringstream connectErrMsg;
-  
-      if(!tpcWorker->pmarkManager.connect(fd, &(address->addr), address->addrlen, CONNECT_TIMEOUT, connectErrMsg)) {
-        tpcWorker->m_queue.m_parent.m_log.Emsg("TPCWorker:","Unable to connect socket:", connectErrMsg.str().c_str());
-        return CURL_SOCKET_BAD;
-      }
-    }
-  
-    return fd;
-  }
+
+    std::ostringstream oss;
+    oss << ipstr << ":" << port;
+    return oss.str();
+}
+
+int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(
+    void *clientp, curlsocktype purpose, struct curl_sockaddr *address) {
+  // Return a socket file descriptor (note the clo_exec flag will be set).
+	int fd =
+		XrdSysFD_Socket(address->family, address->socktype, address->protocol);
+	// See what kind of address will be used to connect
+	if (fd < 0) {
+		return CURL_SOCKET_BAD;
+	}
+	TPCWorker *tpcWorker = (TPCWorker *)clientp;
+	std::fprintf(stderr, "opensocket_callback: %d :: %s\n", fd, tpcWorker->getLabel().c_str());
+	std::fprintf(stderr, "opensocket_callback: Connecting to %s\n", format_sockaddr(address).c_str());
+
+	
+	if (purpose == CURLSOCKTYPE_IPCXN && clientp) {
+		XrdNetAddr thePeer(&(address->addr));
+		//   rec->isIPv6 =  (thePeer.isIPType(XrdNetAddrInfo::IPv6)
+		//                   && !thePeer.isMapped());
+		std::stringstream connectErrMsg;
+
+		// if (!tpcWorker->pmarkManager.connect(fd, &(address->addr), address->addrlen,
+		// 									CONNECT_TIMEOUT, connectErrMsg)) {
+		// tpcWorker->m_queue.m_parent.m_log.Emsg(
+		// 	"TPCWorker:", "Unable to connect socket:",
+		// 	connectErrMsg.str().c_str());
+		// return CURL_SOCKET_BAD;
+		// }
+	}
+
+	return fd;
+}
 
 void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
     std::unique_lock<std::mutex> lock(m_mutex);
