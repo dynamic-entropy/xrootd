@@ -26,8 +26,13 @@ unsigned TPCRequestManager::m_max_pending_ops = 20;
 unsigned TPCRequestManager::m_max_workers = 20;
 
 TPCRequestManager::TPCQueue::TPCWorker::TPCWorker(
-    const std::string &label, TPCQueue &queue)
-    : m_label(label), m_queue(queue) {}
+    const std::string &label, TPCQueue &queue, int scitag)
+    : m_label(label),
+      m_queue(queue),
+      m_scitag(scitag),
+      pmarkHandle((XrdNetPMark*)queue.m_parent.m_xrdEnv.GetPtr("XrdNetPMark*")),
+      pmarkManager(pmarkHandle, scitag, TPC::TpcType::Pull) {}
+
 
 void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(
     TPCWorker *myself) {
@@ -43,6 +48,8 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(
     curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, this);
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, this);
+	curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
+	curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA, this);
 
     mres = curl_multi_add_handle(multi_handle, curl);
     if (mres) {
@@ -136,9 +143,10 @@ int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(
       void *clientp, curl_socket_t fd) {
 	TPCWorker *tpcWorker = (TPCWorker *)clientp;
 	std::fprintf(stderr, "closesocket_callback: %d :: %s\n", fd, tpcWorker->getLabel().c_str());
-	// tpcWorker->pmarkManager.endPmark(fd);
+	tpcWorker->pmarkManager.endPmark(fd);
   	return close(fd);
 }
+
 std::string format_sockaddr(const struct curl_sockaddr *address) {
     char ipstr[INET6_ADDRSTRLEN] = {0};
     uint16_t port = 0;
@@ -169,6 +177,17 @@ std::string format_sockaddr(const struct curl_sockaddr *address) {
     return oss.str();
 }
 
+int TPCRequestManager::TPCQueue::TPCWorker::sockopt_callback(void *clientp, curl_socket_t curlfd, curlsocktype purpose) {
+  TPCWorker *tpcWorker = (TPCWorker *)clientp;
+  std::fprintf(stderr, "sockopt_callback: %d :: %s\n", curlfd, tpcWorker->getLabel().c_str());
+  if (purpose == CURLSOCKTYPE_IPCXN && tpcWorker && tpcWorker->pmarkManager.isEnabled()) {
+      // We will not reach this callback if the corresponding socket could not have been connected
+      // the socket is already connected only if the packet marking is enabled
+      return CURL_SOCKOPT_ALREADY_CONNECTED;
+  }
+  return CURL_SOCKOPT_OK;
+}
+
 int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(
     void *clientp, curlsocktype purpose, struct curl_sockaddr *address) {
   // Return a socket file descriptor (note the clo_exec flag will be set).
@@ -179,8 +198,7 @@ int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(
 		return CURL_SOCKET_BAD;
 	}
 	TPCWorker *tpcWorker = (TPCWorker *)clientp;
-	std::fprintf(stderr, "opensocket_callback: %d :: %s\n", fd, tpcWorker->getLabel().c_str());
-	std::fprintf(stderr, "opensocket_callback: Connecting to %s\n", format_sockaddr(address).c_str());
+	std::fprintf(stderr, "opensocket_callback: %d :: %s :: Connecting to %s\n", fd, tpcWorker->getLabel().c_str(), format_sockaddr(address).c_str());
 
 	
 	if (purpose == CURLSOCKTYPE_IPCXN && clientp) {
@@ -189,13 +207,18 @@ int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(
 		//                   && !thePeer.isMapped());
 		std::stringstream connectErrMsg;
 
-		// if (!tpcWorker->pmarkManager.connect(fd, &(address->addr), address->addrlen,
-		// 									CONNECT_TIMEOUT, connectErrMsg)) {
-		// tpcWorker->m_queue.m_parent.m_log.Emsg(
-		// 	"TPCWorker:", "Unable to connect socket:",
-		// 	connectErrMsg.str().c_str());
-		// return CURL_SOCKET_BAD;
-		// }
+		if (!tpcWorker->pmarkManager.connect(fd, &(address->addr), address->addrlen,
+											CONNECT_TIMEOUT, connectErrMsg)) {
+		tpcWorker->m_queue.m_parent.m_log.Emsg(
+			"TPCWorker:", "Unable to connect socket:",
+			connectErrMsg.str().c_str());
+		return CURL_SOCKET_BAD;
+		}
+
+		tpcWorker->pmarkManager.startTransfer();
+		tpcWorker->pmarkManager.beginPMarks();
+		std::fprintf(stderr, "Started packet marking for %s\n",
+			format_sockaddr(address).c_str());
 	}
 
 	return fd;
@@ -260,7 +283,7 @@ bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
     if (m_workers.size() < m_max_workers) {
         auto worker = std::make_unique<
             TPCRequestManager::TPCQueue::TPCWorker>(
-            handler.GetIdentifier(), *this);
+            handler.GetIdentifier(), *this, handler.GetScitag());
         std::thread t(
             TPCRequestManager::TPCQueue::TPCWorker::RunStatic,
             worker.get());
@@ -332,7 +355,7 @@ int TPCRequestManager::TPCRequest::WaitFor(
 
 TPCRequestManager::TPCRequestManager(XrdOucEnv &xrdEnv,
                                                XrdSysError &eDest)
-    : m_log(eDest) {
+    : m_log(eDest), m_xrdEnv(xrdEnv) {
 }
 
 void TPCRequestManager::SetWorkerIdleTimeout(

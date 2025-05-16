@@ -49,6 +49,49 @@ namespace TPC {
  */
 namespace XrdTpc
 {
+
+class PMarkManager2 {
+    public:
+      class SocketInfo {
+  public:
+    SocketInfo(int fd, const struct sockaddr * sockP);
+    XrdNetAddr netAddr;
+    XrdSecEntity client;
+  };
+
+  PMarkManager2(XrdNetPMark * pmark, int sciTag, const TPC::TpcType type);
+
+  bool connect(int fd, const struct sockaddr * sockP, size_t sockPLen, uint32_t timeout_sec, std::stringstream & err);
+
+  bool isEnabled() const;
+
+  void startTransfer();
+
+  void beginPMarks();
+
+  void endPmark(int fd);
+
+  virtual ~PMarkManager2() = default;
+
+  private:
+  void addFd(int fd, const struct sockaddr * sockP);
+
+  // The queue of socket information from which we will create the packet marking handles
+  std::queue<SocketInfo> mSocketInfos;
+  // The map of socket FD and packet marking handles
+  std::map<int,std::unique_ptr<XrdNetPMark::Handle>> mPmarkHandles;
+  // The instance of the packet marking functionality
+  XrdNetPMark * mPmark;
+  // Is true when startTransfer(...) has been called
+  bool mTransferWillStart;
+  // sciTag provided by the user
+  int mSciTag;
+  // Is true if this transfer is a HTTP TPC PULL transfer, false otherwise
+  // by default is true
+  TPC::TpcType mTpcType;
+
+};
+
 class PMarkManager {
 public:
 
