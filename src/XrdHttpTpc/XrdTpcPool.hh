@@ -45,6 +45,7 @@ class TPCRequestManager final {
         void SetProgress(off_t offset);
         void SetDone(int status, const std::string &msg);
         const std::string &GetIdentifier() const { return m_ident; }
+        int GetScitag() const { return 1;}
         bool IsActive() const {
             return m_active.load(std::memory_order_relaxed);
         }
@@ -94,7 +95,7 @@ class TPCRequestManager final {
       private:
         class TPCWorker final {
           public:
-            TPCWorker(const std::string &label, TPCQueue &queue);
+            TPCWorker(const std::string &label, TPCQueue &queue, int scitag);
             TPCWorker(const TPCWorker &) = delete;
 
             void Run();
@@ -106,6 +107,7 @@ class TPCRequestManager final {
     
             static int closesocket_callback(void *clientp, curl_socket_t fd);
             static int opensocket_callback(void *clientp, curlsocktype purpose, struct curl_sockaddr *address);
+			static int sockopt_callback(void *clientp, curl_socket_t curlfd, curlsocktype purpose);
 
             std::string getLabel() const { return m_label; }
 
@@ -115,7 +117,9 @@ class TPCRequestManager final {
             bool m_idle{false}; // State when worker has no requests to process but is alive
             const std::string m_label; // Label for the worker
             TPCQueue &m_queue; // Reference to the queue this worker is processing
-            // XrdTpc::PMarkManager pmarkManager;
+            int m_scitag; // The scitag for the worker
+            XrdNetPMark *m_pmark_handle; // Packet marking handle
+            XrdTpc::PMarkManager m_pmark_manager; // Packet marking manager
         };
 
         static const long CONNECT_TIMEOUT = 60;
@@ -139,6 +143,7 @@ class TPCRequestManager final {
     static unsigned m_max_pending_ops;
     static unsigned m_max_workers;
     static std::once_flag m_init_once;
+    XrdOucEnv &m_xrdEnv;
 };
 
 } // namespace TPC
