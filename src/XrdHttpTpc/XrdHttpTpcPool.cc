@@ -1,4 +1,4 @@
-#include "XrdTpcPool.hh"
+#include "XrdHttpTpcPool.hh"
 
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -11,7 +11,7 @@
 #include <thread>
 
 #include "XrdSys/XrdSysFD.hh"
-#include "XrdTpcTPC.hh"
+#include "XrdHttpTpcTPC.hh"
 #include <arpa/inet.h>
 
 using namespace TPC;

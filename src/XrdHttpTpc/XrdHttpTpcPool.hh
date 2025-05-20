@@ -12,7 +12,7 @@
 #include <vector>
 
 #include <curl/curl.h>
-#include "XrdTpcPMarkManager.hh"
+#include "XrdHttpTpcPMarkManager.hh"
 // Forward dec'ls
 class XrdOucEnv;
 class XrdSysError;
@@ -119,7 +119,7 @@ class TPCRequestManager final {
             TPCQueue &m_queue; // Reference to the queue this worker is processing
             int m_scitag; // The scitag for the worker
             XrdNetPMark *m_pmark_handle; // Packet marking handle
-            XrdTpc::PMarkManager m_pmark_manager; // Packet marking manager
+            XrdHttpTpc::PMarkManager m_pmark_manager; // Packet marking manager
         };
 
         static const long CONNECT_TIMEOUT = 60;
