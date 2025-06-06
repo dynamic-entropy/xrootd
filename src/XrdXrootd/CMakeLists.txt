@@ -19,6 +19,7 @@ target_sources(XrdServer
                            XrdXrootdFileStats.hh
     XrdXrootdGSReal.cc     XrdXrootdGSReal.hh
     XrdXrootdGStream.cc    XrdXrootdGStream.hh
+    XrdXrootdHttpMon.cc    XrdXrootdHttpMon.hh
     XrdXrootdJob.cc        XrdXrootdJob.hh
     XrdXrootdLoadLib.cc
                            XrdXrootdMonData.hh

@@ -993,6 +993,7 @@ int XrdHttpProtocol::Config(const char *ConfigFN, XrdOucEnv *myEnv) {
   XrdHttpReadRangeHandler::Configure(eDest, var, ReadRangeConfig);
 
   pmarkHandle = (XrdNetPMark* ) myEnv->GetPtr("XrdNetPMark*");
+  httpMon = (XrdXrootdHttpMon*) myEnv->GetPtr("XrdXrootdHttpMon*");
 
   cksumHandler.configure(xrd_cslist);
   auto nonIanaChecksums = cksumHandler.getNonIANAConfiguredCksums();

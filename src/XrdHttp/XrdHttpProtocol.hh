@@ -43,6 +43,7 @@
 #include "XrdSec/XrdSecInterface.hh"
 #include "Xrd/XrdObject.hh"
 #include "XrdXrootd/XrdXrootdBridge.hh"
+#include "XrdXrootd/XrdXrootdHttpMon.hh"
 #include "XrdOuc/XrdOucStream.hh"
 #include "Xrd/XrdProtocol.hh"
 #include "XrdOuc/XrdOucHash.hh"
@@ -450,6 +451,9 @@ protected:
 
   /// Packet marking handler pointer (assigned from the environment during the Config() call)
   static XrdNetPMark * pmarkHandle;
+  
+  // Http monitoring gstream handle
+  static XrdXrootdHttpMon *httpMon;
 
   /// If set to true, the HTTP TPC transfers will forward the credentials to redirected hosts
   static bool tpcForwardCreds;
