@@ -114,6 +114,7 @@ int XrdHttpProtocol::m_bio_type = 0; // BIO type identifier for our custom BIO.
 BIO_METHOD *XrdHttpProtocol::m_bio_method = NULL; // BIO method constructor.
 char *XrdHttpProtocol::xrd_cslist = nullptr;
 XrdNetPMark * XrdHttpProtocol::pmarkHandle = nullptr;
+XrdXrootdHttpMon *XrdHttpProtocol::httpMon = nullptr;
 XrdHttpChecksumHandler XrdHttpProtocol::cksumHandler = XrdHttpChecksumHandler();
 XrdHttpReadRangeHandler::Configuration XrdHttpProtocol::ReadRangeConfig;
 bool XrdHttpProtocol::tpcForwardCreds = false;
@@ -906,6 +907,11 @@ int XrdHttpProtocol::Process(XrdLink *lp) // We ignore the argument here
 
   // Compute and send the response. This may involve further reading from the socket
   rc = CurrentReq.ProcessHTTPReq();
+  if (httpMon) {
+	  XrdXrootdHttpMon::HttpInfo info(100, 2, 5);
+	  httpMon->Report(info);
+	  fprintf(stderr, "HTTPMON:PROCESS: XrdHttpProtocol::httpMon= %p; Msg=Reporting Http Monitoring Info \n", httpMon);
+  }
   if (rc < 0)
      CurrentReq.reset();
 
@@ -943,7 +949,7 @@ int XrdHttpProtocol::Stats(char *buff, int blen, int do_sync) {
   //
   //  if (do_sync) {
   //
-  //    SI->statsMutex.Lock();
+    //  SI->statsMutex.Lock();
   //    SI->readCnt += numReads;
   //    cumReads += numReads;
   //    numReads = 0;
@@ -993,6 +999,8 @@ int XrdHttpProtocol::Config(const char *ConfigFN, XrdOucEnv *myEnv) {
   XrdHttpReadRangeHandler::Configure(eDest, var, ReadRangeConfig);
 
   pmarkHandle = (XrdNetPMark* ) myEnv->GetPtr("XrdNetPMark*");
+  httpMon = (XrdXrootdHttpMon*) myEnv->GetPtr("HttpMonitor*");
+  fprintf(stderr, "HTTPMON:CONFIG: XrdHttpProtocol::myEnv= %p XrdHttpProtocol::httpMon= %p \n", myEnv, httpMon);
 
   cksumHandler.configure(xrd_cslist);
   auto nonIanaChecksums = cksumHandler.getNonIANAConfiguredCksums();
