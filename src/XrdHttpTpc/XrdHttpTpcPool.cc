@@ -137,19 +137,18 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
         if (!request) {
             request = m_queue.ConsumeUntil(m_idle_timeout, this);
             if (!request) {
+    			m_queue.m_parent.m_log.Log(LogMask::Info, "TPCWorker", "Worker for",
+                               m_queue.m_label.c_str(), "exiting");
                 break;
             }
         }
         if (!RunCurl(multi_handle, *request)) {
             m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", "Worker's multi-handle"
                 " caused an internal error.  Worker immediately exiting");
-            m_queue.Done(this);
-            return;
+            break;
         }
     }
-
-    m_queue.m_parent.m_log.Log(LogMask::Info, "TPCWorker", "Worker for",
-                               m_queue.m_label.c_str(), "exiting");
+	curl_multi_cleanup(multi_handle);
     m_queue.Done(this);
 }
 
@@ -238,13 +237,13 @@ int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(
 
 void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_done = true;
     auto it = std::remove_if(m_workers.begin(), m_workers.end(), [&](std::unique_ptr<TPCWorker> &other) {
         return other.get() == worker;
     });
     m_workers.erase(it, m_workers.end());
 
     if (m_workers.empty()) {
+		m_done = true;
         lock.unlock();
         m_parent.Done(m_label);
     }
@@ -287,7 +286,7 @@ bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
     m_ops.push_back(&handler);
     for (auto &worker : m_workers) {
         if (worker->IsIdle()) {
-            worker->m_cv.notify_one();
+			worker->m_cv.notify_one();
             return true;
         }
     }
@@ -446,9 +445,10 @@ bool TPCRequestManager::Produce(
         std::lock_guard<std::shared_mutex> guard{m_mutex, std::adopt_lock};
         auto iter = m_pool_map.find(handler.GetIdentifier());
         if (iter != m_pool_map.end()) {
-            queue = iter->second;
-            if (!queue->IsDone())
+            if (!iter->second->IsDone()){
+            	queue = iter->second;
                 break;
+			}
         } else {
             break;
         }
@@ -474,5 +474,6 @@ bool TPCRequestManager::Produce(
                       "Created new TPC request queue for", queue_name.c_str());
         }
     }
+
     return queue->Produce(handler);
 }
