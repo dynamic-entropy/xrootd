@@ -852,6 +852,10 @@ void XrdHttpReq::sendWebdavErrorMessage(
         }
       }
       break;
+	case XrdHttpReq::rtGET:
+	  if (xrdOperation == kXR_open){
+	  }
+      break;
     default:
       break;
   }

@@ -28,11 +28,15 @@ class File final : public XrdOssWrapDF {
 
         if (leaf == "no_space.txt") errorCode = ENOSPC;
         else if (leaf == "out_of_space_quota.txt") errorCode = EDQUOT;
+		else if (leaf == "unreadable_file") errorCode = EBADF;
+		else if (leaf == "file_does_not_exist") errorCode = ENOENT;
+		else if (leaf == "parent_dir_does_not_exist") errorCode = ENOENT;
         return wrapDF.Open(path, Oflag, Mode, env);
     }
 
     ssize_t Read(void *buffer, off_t offset, size_t size) override {
         if (m_fail && offset > 0) return -EIO;
+        if (errorCode > 0) return -errorCode;
 
         return wrapDF.Read(buffer, offset, size);
     }

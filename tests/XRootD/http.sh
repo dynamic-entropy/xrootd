@@ -263,4 +263,25 @@ function test_http() {
 
   run_and_assert_http_and_error_code 200 "" \
     --header "Want-Digest: crc32c" -I "${HOST}/$alphabetFilePath"
+
+
+  set -x
+
+#   # Test a file does not exist
+#   fileDoesNotExistFilePath="$TMPDIR/file_does_not_exist"
+#   run_and_assert_http_and_error_code 404 "3.1" "${HOST}/$fileDoesNotExistFilePath"
+
+#   # Test parent directory does not exist
+#   # XrootD Does not error on missing parent directory, it instead creates one
+#   parentDirDoesNotExistFilePath="$TMPDIR/parent_dir_does_not_exist"
+#   run_and_assert_http_and_error_code 404 "3.2" \
+# 	--upload-file "$alphabetFilePath" "${HOST}/$parentDirDoesNotExistFilePath"
+
+  # Test file unreadable
+  unreadableFilePath="$TMPDIR/unreadable_file"
+  run_and_assert_http_and_error_code 404 "3.3" \
+	"${HOST}/$unreadableFilePath"
+
+  set +x
+
 }
