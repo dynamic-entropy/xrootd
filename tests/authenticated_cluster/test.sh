@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+set -ex
 # macOS, as of now, cannot run this test because of the 'declare -A'
 # command that we use later, so we just skip this test (sorry apple users)
 if [[ $(uname) == "Darwin" ]]; then
