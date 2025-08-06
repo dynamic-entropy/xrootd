@@ -607,3 +607,49 @@ TEST(XrdHttpTests,encodeOpaqueTest) {
     ASSERT_EQ(encoded,encode_opaque(decoded));
   }
 }
+
+TEST(XrdHttpTests, hasCGIParamAuthz) {
+  struct TestCase {
+    std::string url;
+    bool expected;
+  };
+
+  std::vector<TestCase> cases = {
+      // Exact match, single param
+      {"http://mytesturl.ch/myresource?authz=authzvalue", true},
+
+      // Similar name, should fail
+      {"http://mytesturl.ch/myresource?authauthz=authzvalue", false},
+
+      // No query string
+      {"http://mytesturl.ch/myresource", false},
+
+      // Parameter with no value
+      {"http://mytesturl.ch/myresource?authz", true},
+
+      // Multiple parameters - authz first
+      {"http://mytesturl.ch/myresource?authz=value1&foo=bar", true},
+
+      // Multiple parameters - authz last
+      {"http://mytesturl.ch/myresource?foo=bar&authz=value1", true},
+
+      // Multiple parameters - authz in middle
+      {"http://mytesturl.ch/myresource?foo=bar&authz=value1&baz=qux", true},
+
+      // Case sensitivity check
+      {"http://mytesturl.ch/myresource?Authz=value", false},
+
+      // URL-encoded 'authz' (lowercase encoding)
+      {"http://mytesturl.ch/myresource?%61uthz=value", false},
+
+      // URL-encoded 'authz' (uppercase encoding)
+      {"http://mytesturl.ch/myresource?%41uthz=value", false},
+
+      // URL-encoded value (authz name plain, value encoded)
+      {"http://mytesturl.ch/myresource?authz=%76%61%6C", true}};
+
+  for (const auto &tc : cases) {
+    EXPECT_EQ(XrdHttpReq::hasCGIParam(tc.url, "authz"), tc.expected)
+        << "Failed for URL: " << tc.url;
+  }
+}

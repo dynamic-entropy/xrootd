@@ -252,6 +252,9 @@ public:
 
   void addCgi(const std::string & key, const std::string & value);
 
+  // Check if the URL has a cgi parameter
+  static bool hasCGIParam(std::string_view url, std::string_view paramName);
+
   // Set the transfer status header, if requested by the client
   void setTransferStatusHeader(std::string &header);
 

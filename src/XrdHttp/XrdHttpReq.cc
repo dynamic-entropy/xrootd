@@ -813,9 +813,31 @@ void XrdHttpReq::parseResource(char *res) {
     resourceplusopaque.append('?');
     resourceplusopaque.append(p + 1);
   }
-  
-  
-  
+}
+
+bool XrdHttpReq::hasCGIParam(std::string_view url, std::string_view paramName)
+{
+    auto qpos = url.find('?');
+    if (qpos == std::string_view::npos)
+        return false;
+
+    auto query = url.substr(qpos + 1);
+    while (!query.empty())
+    {
+        auto amp = query.find('&');
+        auto param = (amp == std::string_view::npos) ? query : query.substr(0, amp);
+
+        auto eqpos = param.find('=');
+        auto key = (eqpos == std::string_view::npos) ? param : param.substr(0, eqpos);
+
+        if (key == paramName)
+            return true;
+        if (amp == std::string_view::npos)
+            break;
+
+        query.remove_prefix(amp + 1);
+    }
+    return false;
 }
 
 void XrdHttpReq::sendWebdavErrorMessage(
@@ -1722,6 +1744,18 @@ int XrdHttpReq::ProcessHTTPReq() {
     }
     case XrdHttpReq::rtMOVE:
     {
+        // For move operation query string parameters in resource should also
+        // apply to url in destination header
+        if (opaque)
+        {
+            const char *authz_val = opaque->Get("authz");
+            if (authz_val && !hasCGIParam(destination, "authz"))
+            {
+                std::string encoded_value = encode_str(authz_val);
+                destination += (destination.find('?') != std::string::npos) ? "&" : "?";
+                destination += "authz=" + encoded_value;
+            }
+        }
 
       // --------- MOVE
       memset(&xrdreq, 0, sizeof (ClientRequest));
