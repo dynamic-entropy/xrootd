@@ -813,9 +813,6 @@ void XrdHttpReq::parseResource(char *res) {
     resourceplusopaque.append('?');
     resourceplusopaque.append(p + 1);
   }
-  
-  
-  
 }
 
 void XrdHttpReq::sendWebdavErrorMessage(
@@ -1722,6 +1719,20 @@ int XrdHttpReq::ProcessHTTPReq() {
     }
     case XrdHttpReq::rtMOVE:
     {
+      // For move operation query string parameters in resource should also
+      // apply to url in destination header
+      if (opaque) {
+        const char *authz_val = opaque->Get("authz");
+
+        if (authz_val && !strstr(destination.c_str(), "authz=")) {
+          std::string encoded_value =
+              encode_str(authz_val);
+
+          destination += (strchr(destination.c_str(), '?') ? "&" : "?");
+          destination += "authz=";
+          destination += encoded_value;
+        }
+      }
 
       // --------- MOVE
       memset(&xrdreq, 0, sizeof (ClientRequest));
