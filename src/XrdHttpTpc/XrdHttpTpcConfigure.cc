@@ -96,6 +96,22 @@ bool TPCHandler::Configure(const char *configfn, XrdOucEnv *myEnv)
             } else {
                 m_first_timeout = 2*m_timeout;
             }
+        } else if (!strcmp("tpc.max_active_transfers_per_queue", val)) {
+            if (!(val = Config.GetWord())) {
+                Config.Close();
+                m_log.Emsg("Config", "tpc.max_active_transfers_per_queue value not specified.");
+                return false;
+            }
+            unsigned int max_active = std::stoi(val);
+            m_request_manager.SetMaxWorkers(max_active);
+        } else if (!strcmp("tpc.max_waiting_transfers_per_queue", val)) {
+            if (!(val = Config.GetWord())) {
+                Config.Close();
+                m_log.Emsg("Config", "tpc.max_waiting_transfers_per_queue value not specified.");
+                return false;
+            }
+            unsigned int max_pending = std::stoi(val);
+            m_request_manager.SetMaxIdleRequests(max_pending);
         }
     }
     Config.Close();
