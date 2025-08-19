@@ -114,6 +114,7 @@ int XrdHttpProtocol::m_bio_type = 0; // BIO type identifier for our custom BIO.
 BIO_METHOD *XrdHttpProtocol::m_bio_method = NULL; // BIO method constructor.
 char *XrdHttpProtocol::xrd_cslist = nullptr;
 XrdNetPMark * XrdHttpProtocol::pmarkHandle = nullptr;
+XrdHttpMon *XrdHttpProtocol::httpMon = nullptr;
 XrdHttpChecksumHandler XrdHttpProtocol::cksumHandler = XrdHttpChecksumHandler();
 XrdHttpReadRangeHandler::Configuration XrdHttpProtocol::ReadRangeConfig;
 bool XrdHttpProtocol::tpcForwardCreds = false;
@@ -994,6 +995,17 @@ int XrdHttpProtocol::Config(const char *ConfigFN, XrdOucEnv *myEnv) {
 
   pmarkHandle = (XrdNetPMark* ) myEnv->GetPtr("XrdNetPMark*");
 
+  XrdXrootdGStream *gs = nullptr;
+  if ((gs = (XrdXrootdGStream *)myEnv->GetPtr("http.gStream*")) != nullptr) {
+      httpMon = new XrdHttpMon(eDest.logger(), gs);
+      pthread_t tid;
+      int rc;
+      if ((rc = XrdSysThread::Run(&tid, XrdHttpMon::Start, httpMon, 0, "Http Stats thread"))) {
+          eDest.Emsg("httpMon", rc, "create stats thread");
+          return rc;
+      }
+  }
+
   cksumHandler.configure(xrd_cslist);
   auto nonIanaChecksums = cksumHandler.getNonIANAConfiguredCksums();
   if(nonIanaChecksums.size()) {
@@ -1713,6 +1725,13 @@ int XrdHttpProtocol::ChunkRespHeader(long long bodylen) {
 int XrdHttpProtocol::ChunkRespFooter() {
   const std::string crlf = "\r\n";
   return (SendData(crlf.c_str(), crlf.size())) ? -1 : 0;
+}
+
+
+int XrdHttpProtocol::SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb, int httpStatusCode) {
+
+  httpMon->Record(httpVerb, XrdHttpMon::ToStatusCode(httpStatusCode));
+  return SendSimpleResp(code, desc, header_to_add, body, bodylen, keepalive);
 }
 
 /******************************************************************************/

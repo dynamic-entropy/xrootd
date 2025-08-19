@@ -47,6 +47,7 @@
 #include "Xrd/XrdProtocol.hh"
 #include "XrdOuc/XrdOucHash.hh"
 #include "XrdHttpChecksumHandler.hh"
+#include "XrdHttpMon.hh"
 #include "XrdHttpReadRangeHandler.hh"
 #include "XrdNet/XrdNetPMark.hh"
 
@@ -70,6 +71,7 @@ class XrdOucTokenizer;
 class XrdOucTrace;
 class XrdBuffer;
 class XrdLink;
+class XrdHttpMon;
 class XrdXrootdProtocol;
 class XrdHttpSecXtractor;
 class XrdHttpExtHandler;
@@ -288,6 +290,9 @@ private:
   /// Sends a basic response. If the length is < 0 then it is calculated internally
   int SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive);
 
+  // Record a http gstream entry before sending response
+  int SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb, int httpStatusCode);
+
   /// Starts a chunked response; body of request is sent over multiple parts using the SendChunkResp
   //  API.
   int StartChunkedResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive);
@@ -450,6 +455,9 @@ protected:
 
   /// Packet marking handler pointer (assigned from the environment during the Config() call)
   static XrdNetPMark * pmarkHandle;
+
+  // Http monitoring gstream handle
+  static XrdHttpMon *httpMon;
 
   /// If set to true, the HTTP TPC transfers will forward the credentials to redirected hosts
   static bool tpcForwardCreds;

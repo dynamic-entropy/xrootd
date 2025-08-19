@@ -862,11 +862,9 @@ void XrdHttpReq::sendWebdavErrorMessage(
     httpStatusCode = code;
     httpErrorCode = errCode;
     httpErrorBody = "ERROR: " + errCode + ": " + etext + "\n";
-
-    prot->SendSimpleResp(httpStatusCode, desc, header_to_add,
-                         httpErrorBody.c_str(), httpErrorBody.length(),
-                         keepalive);
   }
+
+  prot->SendSimpleResp(httpStatusCode, desc, header_to_add, httpErrorBody.c_str(), httpErrorBody.length(), keepalive, httpVerb, httpStatusCode);
 }
 
 // Map an XRootD error code to an appropriate HTTP status code and message
