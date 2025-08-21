@@ -37,8 +37,8 @@ class XrdHttpMon {
     // Per (operation, status code) statistics
     struct HttpInfo {
         std::atomic<uint64_t> count{0};
-        std::atomic<uint64_t> bytes{0};
-        std::atomic<std::chrono::system_clock::duration::rep> duration{0};
+        // std::atomic<uint64_t> bytes{0};
+        // std::atomic<std::chrono::system_clock::duration::rep> duration{0};
     };
 
     // Global stats table

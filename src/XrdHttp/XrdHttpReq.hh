@@ -167,10 +167,8 @@ private:
   void mapXrdErrorToHttpStatus();
 
   // Set Webdav Error messages
-  void sendWebdavErrorMessage(XResponseType xrdresp, XErrorCode xrderrcode,
-                              ReqType httpVerb, XRequestTypes xrdOperation,
-                              std::string etext, const char *desc,
-                              const char *header_to_add, bool keepalive);
+  void sendResponse(XResponseType xrdresp, XErrorCode xrderrcode, ReqType httpVerb, XRequestTypes xrdOperation, std::string etext, const char *desc,
+                    const char *header_to_add, const char *body, long long body_len, bool keepalive);
 
   // Sanitize the resource from http[s]://[host]/ questionable prefix
   void sanitizeResourcePfx();

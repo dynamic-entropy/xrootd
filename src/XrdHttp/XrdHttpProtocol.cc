@@ -1728,9 +1728,9 @@ int XrdHttpProtocol::ChunkRespFooter() {
 }
 
 
-int XrdHttpProtocol::SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb, int httpStatusCode) {
+int XrdHttpProtocol::SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb) {
 
-  httpMon->Record(httpVerb, XrdHttpMon::ToStatusCode(httpStatusCode));
+  httpMon->Record(httpVerb, XrdHttpMon::ToStatusCode(code));
   return SendSimpleResp(code, desc, header_to_add, body, bodylen, keepalive);
 }
 

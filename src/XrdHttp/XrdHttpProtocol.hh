@@ -291,7 +291,7 @@ private:
   int SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive);
 
   // Record a http gstream entry before sending response
-  int SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb, int httpStatusCode);
+  int SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb);
 
   /// Starts a chunked response; body of request is sent over multiple parts using the SendChunkResp
   //  API.

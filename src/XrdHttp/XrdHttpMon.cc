@@ -7,7 +7,7 @@
 #include "XrdSys/XrdSysError.hh"
 #include "XrdXrootd/XrdXrootdGStream.hh"
 
-XrdSysError eDest(0, "Ouc");
+XrdSysError eDest(0, "HttpMon");
 
 std::array<std::array<XrdHttpMon::HttpInfo, XrdHttpMon::StatusCodes::sc_Count>, XrdHttpReq::ReqType::rtCount> XrdHttpMon::statsInfo{};
 
@@ -50,24 +50,23 @@ std::string XrdHttpMon::GetMonitoringJson() {
             auto& info = statsInfo[op][sc];
 
             uint64_t count = info.count.exchange(0, std::memory_order_relaxed);
-            uint64_t bytes = info.bytes.exchange(0, std::memory_order_relaxed);
-            auto duration = info.duration.exchange(0, std::memory_order_relaxed);
+            // uint64_t bytes = info.bytes.exchange(0, std::memory_order_relaxed);
+            // auto duration = info.duration.exchange(0, std::memory_order_relaxed);
 
             if (count == 0) continue;
-            std::string key = "http_" + opName + "_" + GetStatusCodeString(static_cast<StatusCodes>(sc));
+            std::string key = "HTTP_" + opName + "_" + GetStatusCodeString(static_cast<StatusCodes>(sc));
 
             if (!first) oss << ",";
             first = false;
 
             oss << "\"" << key << "\":{";
-            oss << "\"count\":" << count << ",";
-            oss << "\"bytes\":" << bytes << ",";
-
-            double durationSec = 0.0;
-            if (duration > 0) {
-                durationSec = std::chrono::duration<double>(std::chrono::system_clock::duration(duration)).count();
-            }
-            oss << "\"duration\":" << durationSec;
+            oss << "\"count\":" << count;
+            // oss << "\"bytes\":" << bytes << ",";
+            // double durationSec = 0.0;
+            // if (duration > 0) {
+            //     durationSec = std::chrono::duration<double>(std::chrono::system_clock::duration(duration)).count();
+            // }
+            // oss << "\"duration\":" << durationSec;
             oss << "}";
         }
     }

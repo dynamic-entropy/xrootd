@@ -474,7 +474,6 @@ int XrdHttpReq::File(XrdXrootd::Bridge::Context &info, //!< the result context
   // sendfile about to be sent by bridge for fetching data for GET:
   // no https, no chunked+trailer, no multirange
 
-  //prot->SendSimpleResp(200, NULL, NULL, NULL, dlen);
   int rc = info.Send(0, 0, 0, 0);
   TRACE(REQ, " XrdHttpReq::File dlen:" << dlen << " send rc:" << rc);
   bool start, finish;
@@ -818,53 +817,57 @@ void XrdHttpReq::parseResource(char *res) {
   
 }
 
-void XrdHttpReq::sendWebdavErrorMessage(
+void XrdHttpReq::sendResponse(
     XResponseType xrdresp, XErrorCode xrderrcode, XrdHttpReq::ReqType httpVerb,
     XRequestTypes xrdOperation, std::string etext, const char *desc,
-    const char *header_to_add, bool keepalive) {
+    const char *header_to_add, const char* body, long long body_len, bool keepalive) {
   int code{0};
   std::string errCode{"Unknown"};
   std::string statusText;
 
-  switch (httpVerb) {
-    case XrdHttpReq::rtPUT:
-      if (xrdOperation == kXR_open) {
-        if (xrderrcode == kXR_isDirectory) {
-          code = 409;
-          errCode = "8.1";
-        } else if (xrderrcode == kXR_NoSpace) {
-          code = 507;
-          errCode = "8.3.1";
-        } else if (xrderrcode == kXR_overQuota) {
-          code = 507;
-          errCode = "8.3.2";
-        } else if (xrderrcode == kXR_NotAuthorized) {
-          code = 403;
-          errCode = "9.3";
-        }
-      } else if (xrdOperation == kXR_write) {
-        if (xrderrcode == kXR_NoSpace) {
-          code = 507;
-          errCode = "8.4.1";
-        } else if (xrderrcode == kXR_overQuota) {
-          code = 507;
-          errCode = "8.4.2";
-        }
+  if (xrdresp == kXR_ok) {
+      code = 200;
+      prot->SendSimpleResp(code, desc, header_to_add, body, body_len, keepalive, httpVerb);
+  } else {
+      switch (httpVerb) {
+          case XrdHttpReq::rtPUT:
+              if (xrdOperation == kXR_open) {
+                  if (xrderrcode == kXR_isDirectory) {
+                      code = 409;
+                      errCode = "8.1";
+                  } else if (xrderrcode == kXR_NoSpace) {
+                      code = 507;
+                      errCode = "8.3.1";
+                  } else if (xrderrcode == kXR_overQuota) {
+                      code = 507;
+                      errCode = "8.3.2";
+                  } else if (xrderrcode == kXR_NotAuthorized) {
+                      code = 403;
+                      errCode = "9.3";
+                  }
+              } else if (xrdOperation == kXR_write) {
+                  if (xrderrcode == kXR_NoSpace) {
+                      code = 507;
+                      errCode = "8.4.1";
+                  } else if (xrderrcode == kXR_overQuota) {
+                      code = 507;
+                      errCode = "8.4.2";
+                  }
+              }
+              break;
+          default:
+              break;
       }
-      break;
-    default:
-      break;
+      if (code != 0) {
+          httpStatusCode = code;
+          httpErrorBody = "ERROR: " + errCode + ": " + etext + "\n";
+      }
+
+      prot->SendSimpleResp(httpStatusCode, desc, header_to_add, httpErrorBody.c_str(), httpErrorBody.length(), keepalive, httpVerb);
   }
 
   // Remove the if at the end of project completion
   // Till then status text defaults to as set by mapXrdResponseToHttpStatus
-  if (code != 0) {
-    httpStatusCode = code;
-    httpErrorCode = errCode;
-    httpErrorBody = "ERROR: " + errCode + ": " + etext + "\n";
-  }
-
-  prot->SendSimpleResp(httpStatusCode, desc, header_to_add, httpErrorBody.c_str(), httpErrorBody.length(), keepalive, httpVerb, httpStatusCode);
 }
 
 // Map an XRootD error code to an appropriate HTTP status code and message
@@ -1071,12 +1074,14 @@ int XrdHttpReq::ProcessHTTPReq() {
 
                 // Default case: the icon and the css of the HTML rendering of XrdHttp
                 if (resource == "/static/css/xrdhttp.css") {
-                    prot->SendSimpleResp(200, NULL, NULL, (char *) static_css_xrdhttp_css, static_css_xrdhttp_css_len, keepalive);
+                    sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) static_css_xrdhttp_css, static_css_xrdhttp_css_len, keepalive);
+                    // prot->SendSimpleResp(200, NULL, NULL, (char *) static_css_xrdhttp_css, static_css_xrdhttp_css_len, keepalive);
                     reset();
                     return retval;
                   }
                 if (resource == "/static/icons/xrdhttp.ico") {
-                    prot->SendSimpleResp(200, NULL, NULL, (char *) favicon_ico, favicon_ico_len, keepalive);
+                    sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) favicon_ico, favicon_ico_len, keepalive);
+                    // prot->SendSimpleResp(200, NULL, NULL, (char *) favicon_ico, favicon_ico_len, keepalive);
                     reset();
                     return retval;
                   }
@@ -1106,7 +1111,8 @@ int XrdHttpReq::ProcessHTTPReq() {
                   if (prot->staticpreload) {
                     XrdHttpProtocol::StaticPreloadInfo *mydata = prot->staticpreload->Find(resource.c_str());
                     if (mydata) {
-                      prot->SendSimpleResp(200, NULL, NULL, (char *) mydata->data, mydata->len, keepalive);
+                      sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) mydata->data, mydata->len, keepalive);
+                      // prot->SendSimpleResp(200, NULL, NULL, (char *) mydata->data, mydata->len, keepalive);
                       reset();
                       return retval;
                     }
@@ -1534,7 +1540,8 @@ int XrdHttpReq::ProcessHTTPReq() {
     }
     case XrdHttpReq::rtOPTIONS:
     {
-      prot->SendSimpleResp(200, NULL, (char *) "DAV: 1\r\nDAV: <http://apache.org/dav/propset/fs/1>\r\nAllow: HEAD,GET,PUT,PROPFIND,DELETE,OPTIONS", NULL, 0, keepalive);
+      sendResponse(kXR_ok, kXR_noErrorYet, request, kXR_read, etext, NULL, (char *) "DAV: 1\r\nDAV: <http://apache.org/dav/propset/fs/1>\r\nAllow: HEAD,GET,PUT,PROPFIND,DELETE,OPTIONS", NULL, 0, keepalive);
+      // prot->SendSimpleResp(200, NULL, (char *) "DAV: 1\r\nDAV: <http://apache.org/dav/propset/fs/1>\r\nAllow: HEAD,GET,PUT,PROPFIND,DELETE,OPTIONS", NULL, 0, keepalive);
       bool ret_keepalive = keepalive; // reset() clears keepalive
       reset();
       return ret_keepalive ? 1 : -1;
@@ -2010,7 +2017,8 @@ XrdHttpReq::PostProcessListing(bool final_) {
     stringresp += XrdVSTRING;
     stringresp += " (CERN IT-SDC)</p>\n";
 
-    prot->SendSimpleResp(200, NULL, NULL, (char *) stringresp.c_str(), 0, keepalive);
+    sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) stringresp.c_str(), 0, keepalive);
+    // prot->SendSimpleResp(200, NULL, NULL, (char *) stringresp.c_str(), 0, keepalive);
     stringresp.clear();
     return keepalive ? 1 : -1;
   }
@@ -2044,7 +2052,8 @@ XrdHttpReq::ReturnGetHeaders() {
       setTransferStatusHeader(responseHeader);
       prot->StartChunkedResp(200, NULL, responseHeader.empty() ? NULL : responseHeader.c_str(), -1, keepalive);
     } else {
-      prot->SendSimpleResp(200, NULL, responseHeader.empty() ? NULL : responseHeader.c_str(), NULL, filesize, keepalive);
+      // prot->SendSimpleResp(200, NULL, responseHeader.empty() ? NULL : responseHeader.c_str(), NULL, filesize, keepalive);
+      sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, responseHeader.empty() ? NULL : responseHeader.c_str(), NULL, filesize, keepalive);
     }
     return 0;
   }
@@ -2175,7 +2184,8 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
               response_headers += "\r\n";
             }
             response_headers += "Accept-Ranges: bytes";
-            prot->SendSimpleResp(200, NULL, response_headers.c_str(), NULL, filesize, keepalive);
+            sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, response_headers.c_str(), NULL, filesize, keepalive);
+            // prot->SendSimpleResp(200, NULL, response_headers.c_str(), NULL, filesize, keepalive);
             return keepalive ? 1 : -1;
           }
         }
@@ -2197,7 +2207,8 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
             response_headers += "\r\n";
           }
           response_headers += "Accept-Ranges: bytes";
-          prot->SendSimpleResp(200, NULL, response_headers.c_str(), NULL, filesize, keepalive);
+          sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, response_headers.c_str(), NULL, filesize, keepalive);
+          // prot->SendSimpleResp(200, NULL, response_headers.c_str(), NULL, filesize, keepalive);
           return keepalive ? 1 : -1;
         } else {
           prot->SendSimpleResp(500, NULL, NULL, "Underlying filesystem failed to calculate checksum.", 0, false);
@@ -2360,8 +2371,8 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
     {
       if (!fopened) {
         if (xrdresp != kXR_ok) {
-          sendWebdavErrorMessage(xrdresp, xrderrcode, XrdHttpReq::rtPUT,
-                                 kXR_open, etext, NULL, NULL, keepalive);
+          sendResponse(xrdresp, xrderrcode, XrdHttpReq::rtPUT,
+                                 kXR_open, etext, NULL, NULL, NULL, 0, keepalive);
           return -1;
         }
 
@@ -2406,8 +2417,8 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
             prot->SendSimpleResp(201, NULL, NULL, (char *)":-)", 0, keepalive);
             return keepalive ? 1 : -1;
           } else {
-            sendWebdavErrorMessage(xrdresp, xrderrcode, XrdHttpReq::rtPUT,
-                                   kXR_close, etext, NULL, NULL, keepalive);
+            sendResponse(xrdresp, xrderrcode, XrdHttpReq::rtPUT,
+                                   kXR_close, etext, NULL, NULL, NULL, 0, keepalive);
             return -1;
           }
         }
@@ -2457,7 +2468,8 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
         default: // response to rm
         {
           if (xrdresp == kXR_ok) {
-            prot->SendSimpleResp(200, NULL, NULL, (char *) ":-)", 0, keepalive);
+            sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) ":-)", 0, keepalive);
+            // prot->SendSimpleResp(200, NULL, NULL, (char *) ":-)", 0, keepalive);
             return keepalive ? 1 : -1;
           }
           prot->SendSimpleResp(httpStatusCode, NULL, NULL,
