@@ -38,21 +38,26 @@ int XrdHttpExtReq::SendSimpleResp(int code, const char* desc, const char* header
   // @TODO: for XRootD 5.0 this two hidden calls should just be added to the external handler API and the code here can be removed
 
   if ( code == 0 ) {
-    return prot->StartSimpleResp(200, desc, header_to_add, bodylen, true);
+    return prot->StartSimpleResp(200, desc, header_to_add, bodylen, true, XrdHttpReq::ReqType::rtEXTERNAL);
   }
 
   if ( code == 1 ) {
-    return prot->SendData(body, bodylen);
+    int rc = prot->SendData(body, bodylen);
+    if (rc < 0){
+      prot->httpMon->RecordError(XrdHttpReq::ReqType::rtEXTERNAL, XrdHttpMon::ToStatusCode(code));
+    }
+    return rc;
   }
 
-  return prot->SendSimpleResp(code, desc, header_to_add, body, bodylen, true);
+  // return prot->SendSimpleResp(code, desc, header_to_add, body, bodylen, true);
+  return prot->SendSimpleResp(code, desc, header_to_add, body, bodylen, true, XrdHttpReq::rtEXTERNAL);
 }
 
 int XrdHttpExtReq::StartChunkedResp(int code, const char *desc, const char *header_to_add)
 {
   if (!prot) return -1;
 
-  return prot->StartChunkedResp(code, desc, header_to_add, -1, true);
+  return prot->StartChunkedResp(code, desc, header_to_add, -1, true, XrdHttpReq::rtEXTERNAL);
 }
 
 int XrdHttpExtReq::ChunkResp(const char *body, long long bodylen)

@@ -92,12 +92,13 @@ public:
     rtMKCOL,
     rtMOVE,
     rtPOST,
+    rtEXTERNAL,
     rtCount 
   };
 
 private:
   // HTTP response parameters to be sent back to the user
-  int httpStatusCode;
+  int httpStatusCode {-1};
   // HTTP Error code for the response
   // e.g. 8.1, 8.3.1, etc.
   // https://twiki.cern.ch/twiki/bin/view/LCG/WebdavErrorImprovement
@@ -225,6 +226,8 @@ public:
   virtual ~XrdHttpReq();
 
   virtual void reset();
+
+  int getHTTPStatusCode() { return httpStatusCode; }
 
   /// Parse the header
   int parseLine(char *line, int len);

@@ -817,53 +817,58 @@ void XrdHttpReq::parseResource(char *res) {
   
 }
 
-void XrdHttpReq::sendResponse(
-    XResponseType xrdresp, XErrorCode xrderrcode, XrdHttpReq::ReqType httpVerb,
-    XRequestTypes xrdOperation, std::string etext, const char *desc,
-    const char *header_to_add, const char* body, long long body_len, bool keepalive) {
+void XrdHttpReq::sendResponse(XResponseType xrdresp, XErrorCode xrderrcode, XrdHttpReq::ReqType httpVerb, XRequestTypes xrdOperation,
+                              std::string etext, const char *desc, const char *header_to_add, const char *body, long long body_len, bool keepalive) {
   int code{0};
   std::string errCode{"Unknown"};
-  std::string statusText;
 
   if (xrdresp == kXR_ok) {
-      code = 200;
-      prot->SendSimpleResp(code, desc, header_to_add, body, body_len, keepalive, httpVerb);
-  } else {
-      switch (httpVerb) {
-          case XrdHttpReq::rtPUT:
-              if (xrdOperation == kXR_open) {
-                  if (xrderrcode == kXR_isDirectory) {
-                      code = 409;
-                      errCode = "8.1";
-                  } else if (xrderrcode == kXR_NoSpace) {
-                      code = 507;
-                      errCode = "8.3.1";
-                  } else if (xrderrcode == kXR_overQuota) {
-                      code = 507;
-                      errCode = "8.3.2";
-                  } else if (xrderrcode == kXR_NotAuthorized) {
-                      code = 403;
-                      errCode = "9.3";
-                  }
-              } else if (xrdOperation == kXR_write) {
-                  if (xrderrcode == kXR_NoSpace) {
-                      code = 507;
-                      errCode = "8.4.1";
-                  } else if (xrderrcode == kXR_overQuota) {
-                      code = 507;
-                      errCode = "8.4.2";
-                  }
-              }
-              break;
-          default:
-              break;
-      }
-      if (code != 0) {
-          httpStatusCode = code;
-          httpErrorBody = "ERROR: " + errCode + ": " + etext + "\n";
-      }
+    switch (httpVerb) {
+      case XrdHttpReq::rtUnknown:
+      case XrdHttpReq::rtMalformed:
+        code = 400;
+        break;
+      default:
+        code = 200;
+    }
+    prot->SendSimpleResp(code, desc, header_to_add, body, body_len, keepalive, httpVerb);
 
-      prot->SendSimpleResp(httpStatusCode, desc, header_to_add, httpErrorBody.c_str(), httpErrorBody.length(), keepalive, httpVerb);
+  } else {
+    switch (httpVerb) {
+      case XrdHttpReq::rtPUT:
+        if (xrdOperation == kXR_open) {
+          if (xrderrcode == kXR_isDirectory) {
+            code = 409;
+            errCode = "8.1";
+          } else if (xrderrcode == kXR_NoSpace) {
+            code = 507;
+            errCode = "8.3.1";
+          } else if (xrderrcode == kXR_overQuota) {
+            code = 507;
+            errCode = "8.3.2";
+          } else if (xrderrcode == kXR_NotAuthorized) {
+            code = 403;
+            errCode = "9.3";
+          }
+        } else if (xrdOperation == kXR_write) {
+          if (xrderrcode == kXR_NoSpace) {
+            code = 507;
+            errCode = "8.4.1";
+          } else if (xrderrcode == kXR_overQuota) {
+            code = 507;
+            errCode = "8.4.2";
+          }
+        }
+        break;
+      default:
+        break;
+    }
+    if (code != 0) {
+      httpStatusCode = code;
+      httpErrorBody = "ERROR: " + errCode + ": " + etext + "\n";
+    }
+
+    prot->SendSimpleResp(httpStatusCode, desc, header_to_add, httpErrorBody.c_str(), httpErrorBody.length(), keepalive, httpVerb);
   }
 
   // Remove the if at the end of project completion
@@ -1010,15 +1015,17 @@ int XrdHttpReq::ProcessHTTPReq() {
     case XrdHttpReq::rtUnset:
     case XrdHttpReq::rtUnknown:
     {
-      prot->SendSimpleResp(400, NULL, NULL, (char *) "Request unknown", 0, false);
+      // prot->SendSimpleResp(400, NULL, NULL, (char *) "Request unknown", 0, false);
+      sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) "Request unknown", 0, false);
       reset();
-      return -1;
+      return -1; // QUESTION: shouldn't this be return 1 - we sent a response for the error
     }
     case XrdHttpReq::rtMalformed:
     {
-      prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed", 0, false);
+      // prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed", 0, false);
+      sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) "Request malformed", 0, false);
       reset();
-      return -1;
+      return -1; // Same as above
     }
     case XrdHttpReq::rtHEAD:
     {
@@ -1076,13 +1083,13 @@ int XrdHttpReq::ProcessHTTPReq() {
                 if (resource == "/static/css/xrdhttp.css") {
                     sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) static_css_xrdhttp_css, static_css_xrdhttp_css_len, keepalive);
                     // prot->SendSimpleResp(200, NULL, NULL, (char *) static_css_xrdhttp_css, static_css_xrdhttp_css_len, keepalive);
-                    reset();
+                    // reset();
                     return retval;
                   }
                 if (resource == "/static/icons/xrdhttp.ico") {
                     sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) favicon_ico, favicon_ico_len, keepalive);
                     // prot->SendSimpleResp(200, NULL, NULL, (char *) favicon_ico, favicon_ico_len, keepalive);
-                    reset();
+                    // reset();
                     return retval;
                   }
 
@@ -1113,7 +1120,7 @@ int XrdHttpReq::ProcessHTTPReq() {
                     if (mydata) {
                       sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) mydata->data, mydata->len, keepalive);
                       // prot->SendSimpleResp(200, NULL, NULL, (char *) mydata->data, mydata->len, keepalive);
-                      reset();
+                      // reset();
                       return retval;
                     }
                   }
@@ -2145,16 +2152,19 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
   }
 
   switch (request) {
-    case XrdHttpReq::rtUnknown:
-    {
-      prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed 1", 0, false);
-      return -1;
-    }
-    case XrdHttpReq::rtMalformed:
-    {
-      prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed 2", 0, false);
-      return -1;
-    }
+    // QUESTION: a request type of unknown should not have reached postprocesshttpreq 
+    // case XrdHttpReq::rtUnknown:
+    // {
+    //   sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) "Request unknown", 0, false);
+    //   // prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed 1", 0, false);
+    //   return -1; // - Should it not be return 1?
+    // }
+    // case XrdHttpReq::rtMalformed:
+    // {
+    //   sendResponse(xrdresp, xrderrcode, request, kXR_read, etext, NULL, NULL, (char *) "Request malformed", 0, false);
+    //   // prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed 2", 0, false);
+    //   return -1;
+    // }
     case XrdHttpReq::rtHEAD:
     {
       if (xrdresp != kXR_ok) {

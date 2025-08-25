@@ -158,6 +158,8 @@ private:
   /// Start a response back to the client
   int StartSimpleResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive);
 
+  int StartSimpleResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb);
+
   /// Send some generic data to the client
   int SendData(const char *body, int bodylen);
 
@@ -296,6 +298,8 @@ private:
   /// Starts a chunked response; body of request is sent over multiple parts using the SendChunkResp
   //  API.
   int StartChunkedResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive);
+
+  int StartChunkedResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb);
 
   /// Send a (potentially partial) body in a chunked response; invoking with NULL body
   //  indicates that this is the last chunk in the response.
