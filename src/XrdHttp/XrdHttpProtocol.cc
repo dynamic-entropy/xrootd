@@ -907,8 +907,10 @@ int XrdHttpProtocol::Process(XrdLink *lp) // We ignore the argument here
 
   // Compute and send the response. This may involve further reading from the socket
   rc = CurrentReq.ProcessHTTPReq();
-  if (rc < 0)
+  if (rc < 0){
+     httpMon->RecordError(CurrentReq.request, XrdHttpMon::ToStatusCode(CurrentReq.getHTTPStatusCode()));
      CurrentReq.reset();
+  }
 
 
 
@@ -1602,6 +1604,12 @@ int XrdHttpProtocol::SendData(const char *body, int bodylen) {
 /*                       S t a r t S i m p l e R e s p                        */
 /******************************************************************************/
 
+int XrdHttpProtocol::StartSimpleResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive,
+                                     XrdHttpReq::ReqType httpVerb) {
+  httpMon->RecordCount(httpVerb, XrdHttpMon::ToStatusCode(code));
+  return StartSimpleResp(code, desc, header_to_add, bodylen, keepalive);
+}
+
 int XrdHttpProtocol::StartSimpleResp(int code, const char *desc,
                                      const char *header_to_add,
                                      long long bodylen, bool keepalive) {
@@ -1675,6 +1683,11 @@ int XrdHttpProtocol::StartSimpleResp(int code, const char *desc,
 /*                      S t a r t C h u n k e d R e s p                       */
 /******************************************************************************/
   
+int XrdHttpProtocol::StartChunkedResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb){
+  httpMon->RecordCount(httpVerb, XrdHttpMon::ToStatusCode(code));
+  return StartChunkedResp(code, desc, header_to_add, -1, true);
+}
+
 int XrdHttpProtocol::StartChunkedResp(int code, const char *desc, const char *header_to_add, long long bodylen, bool keepalive) {
   const std::string crlf = "\r\n";
   std::stringstream ss;
@@ -1730,7 +1743,8 @@ int XrdHttpProtocol::ChunkRespFooter() {
 
 int XrdHttpProtocol::SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive, XrdHttpReq::ReqType httpVerb) {
 
-  httpMon->Record(httpVerb, XrdHttpMon::ToStatusCode(code));
+  httpMon->RecordCount(httpVerb, XrdHttpMon::ToStatusCode(code));
+  fprintf(stderr, "rahul httpVerb=%s recorded \n", XrdHttpMon::GetOperationString(httpVerb).c_str());
   return SendSimpleResp(code, desc, header_to_add, body, bodylen, keepalive);
 }
 

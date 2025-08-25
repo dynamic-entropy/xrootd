@@ -264,5 +264,7 @@ function test_http() {
   run_and_assert_http_and_error_code 200 "" \
     --header "Want-Digest: crc32c" -I "${HOST}/$alphabetFilePath"
 
+  curl -X MYVERB -v -s "${HOST}/$alphabetFilePath"
+
   sleep 5;
 }

@@ -1,9 +1,9 @@
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <string>
 
 #include "XrdHttpReq.hh"
+#include "XrdSys/XrdSysRAtomic.hh"
 
 class XrdXrootdGStream;
 class XrdSysLogger;
@@ -36,8 +36,8 @@ class XrdHttpMon {
 
     // Per (operation, status code) statistics
     struct HttpInfo {
-        std::atomic<uint64_t> count{0};
-        // std::atomic<uint64_t> bytes{0};
+        RAtomic_uint64_t count{0};
+        RAtomic_uint64_t error{0};
         // std::atomic<std::chrono::system_clock::duration::rep> duration{0};
     };
 
@@ -48,12 +48,15 @@ class XrdHttpMon {
 
     static void* Start(void* args);
 
-    static void Record(XrdHttpReq::ReqType op, StatusCodes sc);
+    static void RecordError(XrdHttpReq::ReqType op, StatusCodes sc);
+    static void RecordCount(XrdHttpReq::ReqType op, StatusCodes sc);
 
     static StatusCodes ToStatusCode(int code);
 
     static std::string GetMonitoringJson();
 
+    static std::string GetOperationString(XrdHttpReq::ReqType op);
+    static std::string GetStatusCodeString(StatusCodes sc);
    private:
     ~XrdHttpMon() {};
 
@@ -61,6 +64,4 @@ class XrdHttpMon {
 
     void Report();
 
-    static std::string GetOperationString(XrdHttpReq::ReqType op);
-    static std::string GetStatusCodeString(StatusCodes sc);
 };

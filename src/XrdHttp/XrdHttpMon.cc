@@ -28,13 +28,19 @@ void* XrdHttpMon::Start(void* instance) {
     }
 }
 
-void XrdHttpMon::Record(XrdHttpReq::ReqType op, StatusCodes sc) {
+void XrdHttpMon::RecordCount(XrdHttpReq::ReqType op, StatusCodes sc) {
     if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
 
     auto& info = statsInfo[op][sc];
-    info.count.fetch_add(1, std::memory_order_relaxed);
-    // info.bytes.fetch_add(bytes, std::memory_order_relaxed);
+    info.count++;
     // info.duration.fetch_add(latency.count(), std::memory_order_relaxed);
+}
+
+void XrdHttpMon::RecordError(XrdHttpReq::ReqType op, StatusCodes sc) {
+    if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
+
+    auto& info = statsInfo[op][sc];
+    info.error++;
 }
 
 //  This creates a json with the following format:
@@ -49,19 +55,19 @@ std::string XrdHttpMon::GetMonitoringJson() {
         for (size_t sc = 0; sc < StatusCodes::sc_Count; ++sc) {
             auto& info = statsInfo[op][sc];
 
-            uint64_t count = info.count.exchange(0, std::memory_order_relaxed);
-            // uint64_t bytes = info.bytes.exchange(0, std::memory_order_relaxed);
+            uint64_t total_count = info.count;
+            uint64_t error_count = info.error;
             // auto duration = info.duration.exchange(0, std::memory_order_relaxed);
 
-            if (count == 0) continue;
+            if (total_count == 0) continue;
             std::string key = "HTTP_" + opName + "_" + GetStatusCodeString(static_cast<StatusCodes>(sc));
 
             if (!first) oss << ",";
             first = false;
 
             oss << "\"" << key << "\":{";
-            oss << "\"count\":" << count;
-            // oss << "\"bytes\":" << bytes << ",";
+            oss << "\"count\":" << total_count << ",";
+            oss << "\"errors\":" << error_count;
             // double durationSec = 0.0;
             // if (duration > 0) {
             //     durationSec = std::chrono::duration<double>(std::chrono::system_clock::duration(duration)).count();
@@ -93,6 +99,10 @@ std::string XrdHttpMon::GetOperationString(XrdHttpReq::ReqType op) {
             return "PROPFIND";
         case XrdHttpReq::ReqType::rtPUT:
             return "PUT";
+        case XrdHttpReq::ReqType::rtEXTERNAL:
+            return "EXTERNAL";
+        case XrdHttpReq::ReqType::rtMalformed:
+            return "Malformed";
         default:
             return "UNKNOWN";
     }
