@@ -1586,16 +1586,39 @@ int XrdHttpProtocol::SendData(const char *body, int bodylen) {
       r = SSL_write(ssl, body, bodylen);
       if (r <= 0) {
         ERR_print_errors(sslbio_err);
-        return -1;
+        CurrentReq.monState = XrdHttpReq::MonitState::ERR_NET;
       }
-
     } else {
       r = Link->Send(body, bodylen);
-      if (r <= 0) return -1;
+      if (r <= 0) {
+        CurrentReq.monState = XrdHttpReq::MonitState::ERR_NET;
+      }
     }
   }
 
-  return 0;
+  switch (CurrentReq.monState) {
+    case XrdHttpReq::MonitState::NEW: {
+      break;
+    }
+    case XrdHttpReq::MonitState::SIMPLE_DONE_NOERR:
+    case XrdHttpReq::MonitState::SIMPLE_DONE_PROT_ERR: {
+      httpMon->RecordCount(CurrentReq.request, XrdHttpMon::ToStatusCode(CurrentReq.getHTTPStatusCode()));
+      httpMon->RecordSuccess(CurrentReq.request, XrdHttpMon::ToStatusCode(CurrentReq.getHTTPStatusCode()));
+      break;
+    }
+    case XrdHttpReq::MonitState::ERR_NET: {
+      httpMon->RecordErrNet(CurrentReq.request, XrdHttpMon::ToStatusCode(CurrentReq.getHTTPStatusCode()));
+      break;
+    }
+    case XrdHttpReq::MonitState::ERR_PROT: {
+    httpMon->RecordErrProt(CurrentReq.request, XrdHttpMon::ToStatusCode(CurrentReq.getHTTPStatusCode()));
+    break;
+    }
+    default:
+      break;
+  }
+
+  return r < 0 ? -1 : 0;
 }
 
 /******************************************************************************/
@@ -1736,6 +1759,16 @@ int XrdHttpProtocol::ChunkRespFooter() {
 /// Returns 0 if OK
 
 int XrdHttpProtocol::SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive) {
+
+  // We are dealing with two kinds of request - response pair:
+  // - Chunked Response - The HTTP header is send followed by chunks of data
+  // - Simple Response - data (if available) is send along with the response
+  // A call to send simple response implies that current request has reached its final state
+  if (CurrentReq.xrdresp == kXR_error){
+    CurrentReq.monState = XrdHttpReq::MonitState::SIMPLE_DONE_PROT_ERR;
+  } else {
+  CurrentReq.monState = XrdHttpReq::MonitState::SIMPLE_DONE_NOERR;
+  }
 
   long long content_length = bodylen;
   if (bodylen <= 0) {

@@ -176,6 +176,7 @@ function teardown() {
 		fi
 	done
 	popd >/dev/null || exit
+	mv "${NAME}/xrootd.log" "../${NAME}_xrootd.log"
 	rm -rf "${NAME}"
 	if [[ $(type -t "teardown_${NAME}") == "function" ]]; then
 		"teardown_${NAME}"

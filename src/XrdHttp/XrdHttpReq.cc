@@ -514,6 +514,7 @@ bool XrdHttpReq::Error(XrdXrootd::Bridge::Context &info, //!< the result context
         ) {
 
   TRACE(REQ, " XrdHttpReq::Error");
+  monState = MonitState::ERR_PROT;
 
   xrdresp = kXR_error;
   xrderrcode = (XErrorCode) ecode;
@@ -532,8 +533,10 @@ bool XrdHttpReq::Error(XrdXrootd::Bridge::Context &info, //!< the result context
   // If we are servicing a GET on a directory, it'll generate an error for the default
   // OSS (we don't assume this is always true).  Catch and suppress the error so we can instead
   // generate a directory listing (if configured).
-  if ((request == rtGET) && (xrdreq.header.requestid == ntohs(kXR_open)) && (xrderrcode == kXR_isDirectory))
+  if ((request == rtGET) && (xrdreq.header.requestid == ntohs(kXR_open)) && (xrderrcode == kXR_isDirectory)){
+    monState = MonitState::NEW;
     return true;
+  }
   
   return rc == 0;
 };
@@ -2291,7 +2294,7 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
           {
             // If we already sent out an error, then we cannot send any further
             // messages
-            if (closeAfterError) {
+            if (closeAfterError) { // TODO: check this case
               TRACEI(REQ, "Close was completed after an error: " << xrdresp);
               return xrdresp != kXR_ok ? -1 : 1;
             }
@@ -2890,6 +2893,8 @@ void XrdHttpReq::reset() {
   final = false;
 
   mScitag = -1;
+
+  monState = XrdHttpReq::MonitState::NEW;
 }
 
 void XrdHttpReq::getfhandle() {

@@ -92,6 +92,7 @@ public:
     rtMKCOL,
     rtMOVE,
     rtPOST,
+    rtEXTERNAL,
     rtCount 
   };
 
@@ -228,6 +229,8 @@ public:
 
   virtual void reset();
 
+  int getHTTPStatusCode() { return httpStatusCode; }
+
   /// Parse the header
   int parseLine(char *line, int len);
 
@@ -359,7 +362,14 @@ public:
   int mScitag;
 
 
-
+  enum MonitState {
+    NEW,
+    SIMPLE_DONE_NOERR,
+    SIMPLE_DONE_PROT_ERR,
+    DONE,
+    ERR_NET,
+    ERR_PROT
+  } monState;
 
 
   /// Crunch an http request.

@@ -33,14 +33,31 @@ void XrdHttpMon::RecordCount(XrdHttpReq::ReqType op, StatusCodes sc) {
 
     auto& info = statsInfo[op][sc];
     info.count++;
-    // info.duration.fetch_add(latency.count(), std::memory_order_relaxed);
+    info.updated = true;
 }
 
-void XrdHttpMon::RecordError(XrdHttpReq::ReqType op, StatusCodes sc) {
+void XrdHttpMon::RecordSuccess(XrdHttpReq::ReqType op, StatusCodes sc) {
     if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
 
     auto& info = statsInfo[op][sc];
-    info.error++;
+    info.success++;
+    info.updated = true;
+}
+
+void XrdHttpMon::RecordErrProt(XrdHttpReq::ReqType op, StatusCodes sc) {
+    if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
+
+    auto& info = statsInfo[op][sc];
+    info.error_xrootd++;
+    info.updated = true;
+}
+
+void XrdHttpMon::RecordErrNet(XrdHttpReq::ReqType op, StatusCodes sc) {
+    if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
+
+    auto& info = statsInfo[op][sc];
+    info.error_network++;
+    info.updated = true;
 }
 
 //  This creates a json with the following format:
@@ -55,11 +72,20 @@ std::string XrdHttpMon::GetMonitoringJson() {
         for (size_t sc = 0; sc < StatusCodes::sc_Count; ++sc) {
             auto& info = statsInfo[op][sc];
 
+            if (!info.updated) continue;
+
+            // TODO: take a lock here - fetching counts should happen as an atomic operation
+            // On a second thought - perhaps its not needed
+            // the error/success count increment can appear on a separate packet than total count - which will anyways be the case for requets that live longer than reporting frequency
+            info.updated = false;
             uint64_t total_count = info.count;
-            uint64_t error_count = info.error;
+            uint64_t error_count_network = info.error_network;
+            uint64_t error_count_xrootd = info.error_xrootd;
+            uint64_t success_count = info.success;
+
             // auto duration = info.duration.exchange(0, std::memory_order_relaxed);
 
-            if (total_count == 0) continue;
+            // we do not care about actual count being zero but the change being 0
             std::string key = "HTTP_" + opName + "_" + GetStatusCodeString(static_cast<StatusCodes>(sc));
 
             if (!first) oss << ",";
@@ -67,7 +93,9 @@ std::string XrdHttpMon::GetMonitoringJson() {
 
             oss << "\"" << key << "\":{";
             oss << "\"count\":" << total_count << ",";
-            oss << "\"errors\":" << error_count;
+            oss << "\"errors_network\":" << error_count_network << ",";
+            oss << "\"errors_xrootd\":" << error_count_xrootd << ",";
+            oss << "\"success\":" << success_count;
             // double durationSec = 0.0;
             // if (duration > 0) {
             //     durationSec = std::chrono::duration<double>(std::chrono::system_clock::duration(duration)).count();

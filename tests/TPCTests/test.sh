@@ -385,5 +385,7 @@ verify_checksum "adler32" "${LCLDATADIR}/${src}_empty.ref" "${LCLDATADIR}/${src}
 
 cleanup
 
+sleep 5
+
 echo "ALL TESTS PASSED"
 exit 0

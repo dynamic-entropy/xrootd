@@ -263,4 +263,16 @@ function test_http() {
 
   run_and_assert_http_and_error_code 200 "" \
     --header "Want-Digest: crc32c" -I "${HOST}/$alphabetFilePath"
+
+curl -X MYVERB -v -s "${HOST}/$alphabetFilePath"
+
+openssl rand -base64 -out "myfile.ref" $((1024 * (10000000)))
+
+curl -L -v -s -H 'Transfer-Encoding: chunked' "${HOST}/${TMPDIR}/myfile.ref" --upload-file "myfile.ref"
+
+sleep 2
+
+curl -L -v -s -H 'Transfer-Encoding: chunked' "${HOST}/${TMPDIR}/myfile.ref" --max-time 1 -o /dev/null 
+
+  sleep 5;
 }

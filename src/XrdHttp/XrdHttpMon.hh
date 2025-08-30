@@ -37,7 +37,10 @@ class XrdHttpMon {
     // Per (operation, status code) statistics
     struct HttpInfo {
         RAtomic_uint64_t count{0};
-        RAtomic_uint64_t error{0};
+        RAtomic_uint64_t error_network{0};
+        RAtomic_uint64_t error_xrootd{0};
+        RAtomic_uint64_t success{0};
+        RAtomic_bool updated{false};
         // std::atomic<std::chrono::system_clock::duration::rep> duration{0};
     };
 
@@ -48,8 +51,10 @@ class XrdHttpMon {
 
     static void* Start(void* args);
 
-    static void RecordError(XrdHttpReq::ReqType op, StatusCodes sc);
+    static void RecordErrProt(XrdHttpReq::ReqType op, StatusCodes sc);
+    static void RecordErrNet(XrdHttpReq::ReqType op, StatusCodes sc);
     static void RecordCount(XrdHttpReq::ReqType op, StatusCodes sc);
+    static void RecordSuccess(XrdHttpReq::ReqType op, StatusCodes sc);
 
     static StatusCodes ToStatusCode(int code);
 
