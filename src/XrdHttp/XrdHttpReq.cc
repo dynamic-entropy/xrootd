@@ -874,7 +874,6 @@ void XrdHttpReq::sendWebdavErrorMessage(
 
 void XrdHttpReq::mapXrdErrorToHttpStatus() {
   // Set default HTTP status values for an error case
-  httpStatusCode = 500;
   httpErrorBody = "Unrecognized error";
 
   // Do error mapping
@@ -918,6 +917,7 @@ void XrdHttpReq::mapXrdErrorToHttpStatus() {
         httpStatusCode = 504; httpErrorBody = "Gateway timeout";
         break;
       default:
+        httpStatusCode = 500;
         break;
     }
 
@@ -2844,6 +2844,11 @@ void XrdHttpReq::reset() {
 
   m_resource_with_digest = "";
   m_user_agent = "";
+
+  httpStatusCode = -1;
+  initialStatusCode= -1;
+  httpErrorCode = "";
+  httpErrorBody = "";
 
   headerok = false;
   keepalive = true;
