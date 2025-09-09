@@ -49,6 +49,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include<chrono>
 
 //#include <libxml/parser.h>
 //#include <libxml/tree.h>
@@ -373,8 +374,14 @@ public:
 
   int mScitag;
 
+  std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::time_point::min();
 
-
+  enum MonitState {
+    NEW,
+    NO_ERR_YET,
+    ERR_NET,
+    ERR_PROT
+  } monState;
 
 
   /// Crunch an http request.

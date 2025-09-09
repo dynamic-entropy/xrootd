@@ -1570,6 +1570,38 @@ int XrdHttpProtocol::BuffgetData(int blen, char **data, bool wait) {
   return rlen;
 }
 
+// We handle two types of request–response pairs here:
+//  - Chunked response: the HTTP header is sent first, followed by one or more chunks of data
+//  - Simple response: the header and any data (if present) are sent together in a single step
+//
+// A call to SendSimpleResp() indicates that the current request has reached its final state,
+// so we record both the request count and its completion before returning.
+// The only exception is 100-Continue, which is an interim response and must not be recorded as final.
+void XrdHttpProtocol::Record() {
+  int code = CurrentReq.getInitialStatusCode();
+  if (code < 200) return;
+  auto duration = std::chrono::steady_clock::now() - CurrentReq.startTime;
+
+  switch (CurrentReq.monState) {
+    case XrdHttpReq::MonitState::NEW:
+      httpMon->RecordCount(CurrentReq.request, XrdHttpMon::ToStatusCode(code));
+      CurrentReq.monState = XrdHttpReq::MonitState::NO_ERR_YET;
+      return;
+
+    case XrdHttpReq::MonitState::NO_ERR_YET:
+      httpMon->RecordSuccess(CurrentReq.request, XrdHttpMon::ToStatusCode(code), duration);
+      return;
+
+    case XrdHttpReq::MonitState::ERR_NET:
+      httpMon->RecordErrNet(CurrentReq.request, XrdHttpMon::ToStatusCode(code), duration);
+      return;
+
+    case XrdHttpReq::MonitState::ERR_PROT:
+      httpMon->RecordErrProt(CurrentReq.request, XrdHttpMon::ToStatusCode(code), duration);
+      return;
+  }
+}
+
 /******************************************************************************/
 /*                              S e n d D a t a                               */
 /******************************************************************************/
@@ -1578,7 +1610,7 @@ int XrdHttpProtocol::BuffgetData(int blen, char **data, bool wait) {
 
 int XrdHttpProtocol::SendData(const char *body, int bodylen) {
 
-  int r;
+  int r{1};
 
   if (body && bodylen) {
     TRACE(REQ, "Sending " << bodylen << " bytes");
@@ -1586,16 +1618,18 @@ int XrdHttpProtocol::SendData(const char *body, int bodylen) {
       r = SSL_write(ssl, body, bodylen);
       if (r <= 0) {
         ERR_print_errors(sslbio_err);
-        return -1;
+        CurrentReq.monState = XrdHttpReq::MonitState::ERR_NET;
       }
-
     } else {
       r = Link->Send(body, bodylen);
-      if (r <= 0) return -1;
+      if (r <= 0) {
+        CurrentReq.monState = XrdHttpReq::MonitState::ERR_NET;
+      }
     }
   }
 
-  return 0;
+
+  return r <= 0 ? -1 : 0;
 }
 
 /******************************************************************************/
@@ -1679,6 +1713,7 @@ int XrdHttpProtocol::StartChunkedResp(int code, const char *desc, const char *he
   const std::string crlf = "\r\n";
   std::stringstream ss;
   CurrentReq.setHttpStatusCode(code);
+  Record();
 
   if (header_to_add && (header_to_add[0] != '\0')) {
     ss << header_to_add << crlf;
@@ -1686,7 +1721,10 @@ int XrdHttpProtocol::StartChunkedResp(int code, const char *desc, const char *he
 
   ss << "Transfer-Encoding: chunked";
   TRACEI(RSP, "Starting chunked response");
-  return StartSimpleResp(code, desc, ss.str().c_str(), bodylen, keepalive);
+
+  int r = StartSimpleResp(code, desc, ss.str().c_str(), bodylen, keepalive);
+  if (r < 0) Record();
+  return r;
 }
 
 /******************************************************************************/
@@ -1698,13 +1736,24 @@ int XrdHttpProtocol::ChunkResp(const char *body, long long bodylen) {
   long long header_len = (bodylen < 0) ? 0 : content_length;
 
   if (ChunkRespHeader(header_len)) {
+    Record();
     return -1;
   }
 
-  if (body && SendData(body, content_length))
+  if (body && SendData(body, content_length)){
+    Record();
     return -1;
+  }
 
-  return ChunkRespFooter();
+  int r = ChunkRespFooter();
+
+  if (content_length == 0 || bodylen == -1) { //final chunk
+    if (CurrentReq.xrdresp == kXR_error && CurrentReq.monState == XrdHttpReq::MonitState::NO_ERR_YET)
+      CurrentReq.monState = XrdHttpReq::MonitState::ERR_PROT;
+    Record();
+  }
+
+  return r;
 }
 
 /******************************************************************************/
@@ -1740,23 +1789,30 @@ int XrdHttpProtocol::ChunkRespFooter() {
 /// Returns 0 if OK
 
 int XrdHttpProtocol::SendSimpleResp(int code, const char *desc, const char *header_to_add, const char *body, long long bodylen, bool keepalive) {
+
+  int r{0};
   CurrentReq.setHttpStatusCode(code);
+  Record();
 
   long long content_length = bodylen;
   if (bodylen <= 0) {
     content_length = body ? strlen(body) : 0;
   }
 
-  if (StartSimpleResp(code, desc, header_to_add, content_length, keepalive) < 0)
+  if (StartSimpleResp(code, desc, header_to_add, content_length, keepalive) < 0) {
+    Record();
     return -1;
+  }
 
-  //
+  // For simple response even if xrdresp results in an error; we report as if there was none
+  // This is because they are handled and are not un returned errors
+  if (CurrentReq.xrdresp == kXR_error) CurrentReq.monState = XrdHttpReq::MonitState::NO_ERR_YET;
+
   // Send the data
-  //
-  if (body)
-    return SendData(body, content_length);
+  if (body) r = SendData(body, content_length);
 
-  return 0;
+  Record();
+  return r;
 }
 
 /******************************************************************************/
