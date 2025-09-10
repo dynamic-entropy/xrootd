@@ -26,19 +26,32 @@ class File final : public XrdOssWrapDF {
 
         m_fail = leaf == "fail_read.txt";
 
-        if (leaf == "no_space.txt") errorCode = ENOSPC;
-        else if (leaf == "out_of_space_quota.txt") errorCode = EDQUOT;
+        if (leaf == "no_space.txt") {
+            errorCode = ENOSPC;
+            m_write_fail = true;
+        // } else if (leaf == "fail_read.txt") {
+        //     m_read_fail = true;
+        } else if (leaf == "out_of_space_quota.txt") {
+            errorCode = EDQUOT;
+            m_write_fail = true;
+        } else if (leaf == "file_does_not_exist") {
+            return -ENOENT;
+        } else if (leaf == "unreadable_file") {
+            errorCode = EBADF;
+            m_read_fail = true;
+        }
         return wrapDF.Open(path, Oflag, Mode, env);
     }
 
     ssize_t Read(void *buffer, off_t offset, size_t size) override {
         if (m_fail && offset > 0) return -EIO;
+        if (errorCode > 0 && m_read_fail) return -errorCode;
 
         return wrapDF.Read(buffer, offset, size);
     }
 
     ssize_t Write(const void *buffer, off_t offset, size_t size) override {
-        if (errorCode >= 0) return -errorCode;
+        if (errorCode >= 0 && m_write_fail) return -errorCode;
 
         return wrapDF.Write(buffer, offset, size);
     }
@@ -47,6 +60,8 @@ class File final : public XrdOssWrapDF {
 
   private:
     bool m_fail{false};
+    bool m_read_fail{false};
+    bool m_write_fail{false};
     int errorCode{-1};
     std::unique_ptr<XrdOssDF> m_wrapped;
 };

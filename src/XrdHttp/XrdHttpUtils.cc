@@ -497,6 +497,49 @@ char *escapeXML(const char *str) {
   return r;
 }
 
+int mapXrdErrToHttp(XErrorCode xrdError) {
+
+  HttpStatus statusCode;
+
+  switch(xrdError){
+    case kXR_AuthFailed:
+      statusCode = HTTP_FORBIDDEN; break;
+
+    case kXR_NotAuthorized:
+      statusCode = HTTP_UNAUTHORIZED; break;
+
+    case kXR_NotFound:
+      statusCode = HTTP_NOT_FOUND; break;
+
+    case kXR_Unsupported:
+    case kXR_InvalidRequest:  // NOT_ACCEPTABLE?
+      statusCode = HTTP_METHOD_NOT_ALLOWED; break;
+
+    case kXR_FileLocked:
+      statusCode = HTTP_LOCKED; break;
+
+    case kXR_isDirectory:  // UNPROCESSABLE_ENTITY?
+    case kXR_ItExists:
+    case kXR_Conflict:
+      statusCode = HTTP_CONFLICT; break;
+
+    case kXR_noserver:
+      statusCode = HTTP_BAD_GATEWAY; break;
+
+    case kXR_TimerExpired:
+      statusCode = HTTP_GATEWAY_TIMEOUT; break;
+
+    case kXR_NoSpace:
+    case kXR_overQuota:
+      statusCode = HTTP_INSUFFICIENT_STORAGE; break;
+
+    default:
+      statusCode = HTTP_IM_A_TEAPOT;
+    }
+
+  return static_cast<int>(statusCode);
+}
+
 int mapErrNoToHttp(int err) {
   HttpStatus statusCode;
 

@@ -166,7 +166,7 @@ private:
   void mapXrdErrorToHttpStatus();
 
   // Set Webdav Error messages
-  void sendWebdavErrorMessage(XResponseType xrdresp, XErrorCode xrderrcode,
+  void generateWebdavErrorMessage(XResponseType xrdresp, XErrorCode xrderrcode,
                               ReqType httpVerb, XRequestTypes xrdOperation,
                               std::string etext, const char *desc,
                               const char *header_to_add, bool keepalive);

@@ -192,6 +192,7 @@ function test_http() {
   assert_eq "1" "$(echo "$receivedHeader" | wc -l | sed 's/^ *//')" "Incorrect number of 'Test' header values"
   assert_eq "$expectedHeader" "$receivedHeader" "HEAD is missing statically-defined Test header"
 
+  set -x
   ## Download fails on a read failure
   # Default HTTP request: TCP socket abruptly closes
   assert_failure curl -v --raw "${HOST}/${TMPDIR}/fail_read.txt" --output /dev/null --write-out '%{http_code} %{size_download}' > "$outputFilePath"
@@ -220,56 +221,120 @@ function test_http() {
   run_and_assert_http_and_error_code() {
     local expected_http_code="$1"
     local expected_error_code="$2"
-    shift 2
+    local expected_trailer_code="$3"
+    shift 3
+
+    local use_trailer=false
+    local curl_args=()
+
+    # Look for --with-trailer option
+    for arg in "$@"; do
+      if [[ "$arg" == "--with-trailer" ]]; then
+        use_trailer=true
+      else
+        curl_args+=("$arg")
+      fi
+    done
 
     local body_file
     body_file=$(mktemp)
     local http_code
 
-    # Run the curl command, capture HTTP code and body
-    http_code=$(curl -s -v -L -w "%{http_code}" -o "$body_file" "$@")
+    # Add headers if trailers requested
+    if $use_trailer; then
+      curl_args+=(
+        -H 'TE: trailers'
+        -H 'X-Transfer-Status: true'
+        --raw
+      )
+    fi
+
+    # Run curl: body (with possible trailers) into body_file
+    http_code=$(curl -s -L \
+      -w "%{http_code}" \
+      -o "$body_file" \
+      "${curl_args[@]}")
+
     local body
     body=$(< "$body_file")
-    rm -f "$body_file"
 
-    # Assertions
+    # Assert HTTP code
     assert_eq "$expected_http_code" "$http_code"
 
-    # Only assert on error code if HTTP status is 400+
-    if [[ "$http_code" -ge 400 && -n "$expected_error_code" ]]; then
-      local error_code
-      error_code=$(echo "$body" | grep -oE 'ERROR: [0-9]+(\.[0-9]+){1,2}' | awk '{print $2}')
-      # Print body only if assertion fails
-      assert_eq "$expected_error_code" "$error_code" "$body" 
+    if $use_trailer; then
+      # Look for trailer
+      local trailer_line
+      trailer_line=$(grep -i '^X-Transfer-Status:' "$body_file" | sed -E 's/^[^:]+: *//')
+
+      if [[ -n "$trailer_line" ]]; then
+        local trailer_code
+        trailer_code=$(echo "$trailer_line" | cut -d: -f1 | xargs)
+        assert_eq "$expected_trailer_code" "$trailer_code" "$trailer_line"
+
+        # Extract error code (n.m or n.m.l etc.) from trailer message
+        if [[ -n "$expected_error_code" ]]; then
+          local error_code
+          error_code=$(echo "$trailer_line" | grep -oE '[0-9]+(\.[0-9]+){1,2}')
+          assert_eq "$expected_error_code" "$error_code" "$trailer_line"
+        fi
+      fi
+    else
+      # Error code check from body (normal case)
+      if [[ "$http_code" -ge 400 && -n "$expected_error_code" ]]; then
+        local error_code
+        error_code=$(echo "$body" | grep -oE 'ERROR: [0-9]+(\.[0-9]+){1,2}' | awk '{print $2}')
+        assert_eq "$expected_error_code" "$error_code" "$body"
+      fi
     fi
+
+    rm -f "$body_file"
   }
 
   # Overwrite a directory with a file - File / Directory conflict
-  run_and_assert_http_and_error_code 409 "8.1" \
+  run_and_assert_http_and_error_code 409 "8.1" "" \
     --upload-file "$alphabetFilePath" "${HOST}/$TMPDIR"
 
   # Upload a file that should fail due to insufficient space
   # The server can only close the connection if no space if left mid write
   # noSpaceFilePath="$TMPDIR/no_space.txt"
-  # run_and_assert_http_and_error_code 507 "8.4.1" \
-  #   --upload-file "$alphabetFilePath" "${HOST}/$noSpaceFilePath"
+  # run_and_assert_http_and_error_code 200 "8.4.1" 507 \
+  #   --upload-file "$alphabetFilePath" "${HOST}/$noSpaceFilePath" --with-trailer
 
   # Upload a file that should fail due to insufficient inodes
   noInodeFilePath="$TMPDIR/no_inode.txt"
-  run_and_assert_http_and_error_code 507 "8.3.1" \
+  run_and_assert_http_and_error_code 507 "8.3.1" "" \
     --upload-file "$alphabetFilePath" "${HOST}/$noInodeFilePath"
 
-  # # Fail upload due to insufficient user quota for space
+  # Fail upload due to insufficient user quota for space
   # Not handled yet - connection is closed instead
   # outOfSpaceQuotaFilePath="$TMPDIR/out_of_space_quota.txt"
-  # run_and_assert_http_and_error_code 507 "8.4.2" \
-  #   --upload-file "$alphabetFilePath" "${HOST}/$outOfSpaceQuotaFilePath"
+  # run_and_assert_http_and_error_code 200 "8.4.2" 507 \
+  #   --upload-file "$alphabetFilePath" "${HOST}/$outOfSpaceQuotaFilePath" --with-trailer
 
   # Fail upload due to insufficient user quota for inodes
   outOfInodeQuotaFilePath="$TMPDIR/out_of_inode_quota.txt"
-  run_and_assert_http_and_error_code 507 "8.3.2" \
+  run_and_assert_http_and_error_code 507 "8.3.2" "" \
     --upload-file "$alphabetFilePath" "${HOST}/$outOfInodeQuotaFilePath"
 
-  run_and_assert_http_and_error_code 200 "" \
+  run_and_assert_http_and_error_code 200 "" "" \
     --header "Want-Digest: crc32c" -I "${HOST}/$alphabetFilePath"
+
+  # Test a file does not exist
+  fileDoesNotExistFilePath="$TMPDIR/file_does_not_exist"
+  run_and_assert_http_and_error_code 404 "3.1" "" \
+    "${HOST}/$fileDoesNotExistFilePath"
+
+  # Test parent directory does not exist
+  # XrootD Does not error on missing parent directory, it instead creates one
+  # parentDirDoesNotExistFilePath="$TMPDIR/parent_dir_does_not_exist"
+  # run_and_assert_http_and_error_code 200 "3.2" 404 \
+  #   --upload-file "$alphabetFilePath" "${HOST}/$parentDirDoesNotExistFilePath" --with-trailer
+
+  # Test file unreadable
+  unreadableFilePath="$TMPDIR/unreadable_file"
+  assert davix-put "$alphabetFilePath" "${HOST}/$unreadableFilePath"
+  run_and_assert_http_and_error_code 200 "" 500 \
+    "${HOST}/$unreadableFilePath" --with-trailer
+
+  set +x
 }

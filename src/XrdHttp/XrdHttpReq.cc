@@ -822,7 +822,7 @@ void XrdHttpReq::parseResource(char *res) {
   
 }
 
-void XrdHttpReq::sendWebdavErrorMessage(
+void XrdHttpReq::generateWebdavErrorMessage(
     XResponseType xrdresp, XErrorCode xrderrcode, XrdHttpReq::ReqType httpVerb,
     XRequestTypes xrdOperation, std::string etext, const char *desc,
     const char *header_to_add, bool keepalive) {
@@ -856,7 +856,22 @@ void XrdHttpReq::sendWebdavErrorMessage(
         }
       }
       break;
+    case XrdHttpReq::rtGET:
+      if (xrdOperation == kXR_open) {
+        if (xrderrcode == kXR_NotFound) {
+          code = 404;
+          errCode = "3.1";
+        }
+      } else if (xrdOperation == kXR_read) {
+        if (xrderrcode == kXR_IOError) {  // We do not reach this case - HTTP 200 is already sent on open
+          code = 404;
+          errCode = "3.3";
+        }
+      }
+      break;
     default:
+      code = 500;
+      errCode = "0.0";
       break;
   }
 
@@ -866,10 +881,6 @@ void XrdHttpReq::sendWebdavErrorMessage(
     httpStatusCode = code;
     httpErrorCode = errCode;
     httpErrorBody = "ERROR: " + errCode + ": " + etext + "\n";
-
-    prot->SendSimpleResp(httpStatusCode, desc, header_to_add,
-                         httpErrorBody.c_str(), httpErrorBody.length(),
-                         keepalive);
   }
 }
 
@@ -2267,7 +2278,7 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
             fileflags = kXR_isDir;
             return 0;
           } else { // xrdresp indicates an error occurred
-
+            generateWebdavErrorMessage(xrdresp, xrderrcode, request, kXR_open, etext, NULL, NULL, false);
             prot->SendSimpleResp(httpStatusCode, NULL, NULL,
                                   httpErrorBody.c_str(), httpErrorBody.length(), false);
             return -1;
@@ -2370,8 +2381,8 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
     {
       if (!fopened) {
         if (xrdresp != kXR_ok) {
-          sendWebdavErrorMessage(xrdresp, xrderrcode, XrdHttpReq::rtPUT,
-                                 kXR_open, etext, NULL, NULL, keepalive);
+          generateWebdavErrorMessage(xrdresp, xrderrcode, XrdHttpReq::rtPUT, kXR_open, etext, NULL, NULL, keepalive);
+          prot->SendSimpleResp(httpStatusCode, NULL, NULL, httpErrorBody.c_str(), httpErrorBody.length(), keepalive);
           return -1;
         }
 
@@ -2416,8 +2427,8 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
             prot->SendSimpleResp(201, NULL, NULL, (char *)":-)", 0, keepalive);
             return keepalive ? 1 : -1;
           } else {
-            sendWebdavErrorMessage(xrdresp, xrderrcode, XrdHttpReq::rtPUT,
-                                   kXR_close, etext, NULL, NULL, keepalive);
+            generateWebdavErrorMessage(xrdresp, xrderrcode, XrdHttpReq::rtPUT, kXR_close, etext, NULL, NULL, keepalive);
+            prot->SendSimpleResp(httpStatusCode, NULL, NULL, httpErrorBody.c_str(), httpErrorBody.length(), keepalive);
             return -1;
           }
         }
