@@ -33,14 +33,14 @@ function test_http() {
 		assert openssl rand -base64 -out "${TMPDIR}/${i}.ref" $((1024 * (RANDOM + 1)))
 	done
 
-	# upload local files to the server in parallel with davix-put
+	# upload local files to the server in parallel with xrdcp --allow-http
 
 	for i in $FILES; do
-		assert davix-put "${TMPDIR}/${i}.ref" "${HOST}/${TMPDIR}/${i}.ref"
+		assert xrdcp --allow-http "${TMPDIR}/${i}.ref" "${HOST}/${TMPDIR}/${i}.ref"
 	done
 	printf "%1048576s" " " | sed 's/ /blah/g' > "${TMPDIR}/fail_read.txt"
-	assert davix-put "${TMPDIR}/fail_read.txt" "${HOST}/${TMPDIR}/fail_read.txt"
-	assert davix-put "${TMPDIR}/${i}.ref" "${HOST}/${TMPDIR}/testlistings/01.ref"
+	assert xrdcp --allow-http "${TMPDIR}/fail_read.txt" "${HOST}/${TMPDIR}/fail_read.txt"
+	assert xrdcp --allow-http "${TMPDIR}/${i}.ref" "${HOST}/${TMPDIR}/testlistings/01.ref"
 
 	# list uploaded files, then download them to check for corruption
 
@@ -49,7 +49,7 @@ function test_http() {
 	# download files back with davix-get
 
 	for i in $FILES; do
-		assert davix-get "${HOST}/${TMPDIR}/${i}.ref" "${TMPDIR}/${i}.dat"
+		assert xrdcp --allow-http "${HOST}/${TMPDIR}/${i}.ref" "${TMPDIR}/${i}.dat"
 	done
 
 	# check that all checksums for downloaded files match

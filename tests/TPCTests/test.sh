@@ -12,6 +12,23 @@ set -Eexo pipefail
 : "${OPENSSL:=$(command -v openssl)}"
 : "${CURL:=$(command -v curl)}"
 
+# Create the plugin configuration to utilize the freshly-built plugin
+export XRD_PLUGINCONFDIR="$BINARY_DIR/client.plugins.d"
+mkdir -p "$XRD_PLUGINCONFDIR"
+
+PLUGIN_SUFFIX=so
+if [ "$(uname)" = Darwin ]; then
+  PLUGIN_SUFFIX=dylib
+fi
+
+cat > "$XRD_PLUGINCONFDIR/curl-plugin.conf" <<EOF
+
+url = http://*;https://*
+lib = $BINARY_DIR/lib/libXrdClCurl.$PLUGIN_SUFFIX
+enable = true
+
+EOF
+
 # Function to check for required commands
 check_commands() {
     local missing=()
@@ -77,6 +94,7 @@ setup_scitokens() {
 # shellcheck disable=SC2317
 cleanup() {
     ## Cleanup empty files
+    set +ex
     src_idx=0
     dst_idx=1
     src=${hosts_abbrev[${src_idx}]}
@@ -148,6 +166,8 @@ upload_file() {
 
     if [[ -z "${protocol}" || "${protocol}" == "root" ]]; then
         ${XRDCP} "${local_file}" "${remote_file}"
+    elif [[ "${protocol}" == "http" ]]; then
+        ${XRDCP} --allow-http "${local_file}" "${remote_file}"
     elif [[ "${protocol}" == "http" ]]; then
         http_code=$(exec 3>&1; ${CURL} -X PUT -L -s -v -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${BEARER_TOKEN}" \

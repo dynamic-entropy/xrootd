@@ -109,13 +109,30 @@ REMOTE_DIR="${PWD}/${NAME}/xrootd"
 
 export CONF PATH SOURCE_DIR BINARY_DIR LOCAL_DIR REMOTE_DIR
 
+# Create the plugin configuration to utilize the freshly-built plugin
+export XRD_PLUGINCONFDIR="$BINARY_DIR/client.plugins.d"
+mkdir -p "$XRD_PLUGINCONFDIR"
+
+PLUGIN_SUFFIX=so
+if [ "$(uname)" = Darwin ]; then
+  PLUGIN_SUFFIX=dylib
+fi
+
+cat > "$XRD_PLUGINCONFDIR/curl-plugin.conf" <<EOF
+
+url = http://*;https://*
+lib = $BINARY_DIR/lib/libXrdClCurl.$PLUGIN_SUFFIX
+enable = true
+
+EOF
+
 test -r "${SCRIPT}" || error "test script not found"
 
 # shellcheck source=/dev/null
 source  "${SCRIPT}" || error "failed to source ${SCRIPT}"
 
 function printlogs() {
-	tail -n "${MAXLINES:-20}" "${NAME}"/*.log 1>&2
+	tail -n "${MAXLINES:-50}" "${NAME}"/*.log 1>&2
 }
 
 function setup() {
