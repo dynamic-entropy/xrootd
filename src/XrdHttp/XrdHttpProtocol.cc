@@ -480,6 +480,33 @@ BIO *XrdHttpProtocol::CreateBIO(XrdLink *lp)
   return ret;
 }
 
+void initWebdavTable() {
+
+    webdavTable[XrdHttpReq::rtPUT][kXR_open - XrdOpBase][kXR_isDirectory   - XrdErrBase] = {409, "8.1"};
+    webdavTable[XrdHttpReq::rtPUT][kXR_open - XrdOpBase][kXR_NoSpace       - XrdErrBase] = {507, "8.3.1"};
+    webdavTable[XrdHttpReq::rtPUT][kXR_open - XrdOpBase][kXR_overQuota     - XrdErrBase] = {507, "8.3.2"};
+    webdavTable[XrdHttpReq::rtPUT][kXR_open - XrdOpBase][kXR_NotAuthorized - XrdErrBase] = {403, "9.3"};
+
+    webdavTable[XrdHttpReq::rtPUT][kXR_write - XrdOpBase][kXR_NoSpace      - XrdErrBase] = {507, "8.4.1"};
+    webdavTable[XrdHttpReq::rtPUT][kXR_write - XrdOpBase][kXR_overQuota    - XrdErrBase] = {507, "8.4.2"};
+
+    webdavTable[XrdHttpReq::rtGET][kXR_open - XrdOpBase][kXR_NotFound      - XrdErrBase] = {404, "3.1"};
+}
+
+const WebdavMapVal* lookupWebdavError(XrdHttpReq::ReqType req, XRequestTypes op, XErrorCode err) {
+    int r = req;
+    if (r < 0 || r >= ReqTypeCount) return nullptr;
+
+    int o = op - XrdOpBase;
+    if (o < 0 || o >= XrdOpCount) return nullptr;
+
+    int e = err - XrdErrBase;
+    if (e < 0 || e >= XrdErrCount) return nullptr;
+
+    const auto& val = webdavTable[r][o][e];
+
+    return val.httpStatus ? &val : nullptr;
+}
 
 /******************************************************************************/
 /*                               P r o c e s s                                */
@@ -1780,6 +1807,9 @@ int XrdHttpProtocol::Configure(char *parms, XrdProtocol_Config * pi) {
     sprintf(buf, "%d", Port);
     Port_str = strdup(buf);
   }
+
+  // Initialise error map table during protocol initialisation
+  initWebdavTable();
 
   // Now process and configuration parameters
   //

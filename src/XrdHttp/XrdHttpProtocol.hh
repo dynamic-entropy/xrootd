@@ -78,6 +78,24 @@ struct XrdVersionInfo;
 class XrdOucGMap;
 class XrdCryptoFactory;
 
+constexpr int ReqTypeCount = XrdHttpReq::rtCount;
+constexpr int XrdOpBase    = kXR_1stRequest;
+constexpr int XrdOpCount   = kXR_REQFENCE - XrdOpBase;
+
+constexpr int XrdErrBase   = kXR_ErrCodeBase;
+constexpr int XrdErrCount  = kXR_ERRFENCE - XrdErrBase;
+
+struct WebdavMapVal {
+    int httpStatus;
+    const char* httpErrorCode;
+};
+
+static WebdavMapVal webdavTable[ReqTypeCount][XrdOpCount][XrdErrCount];
+
+static void initWebdavTable();
+
+const WebdavMapVal* lookupWebdavError(XrdHttpReq::ReqType req, XRequestTypes op, XErrorCode err);
+
 class XrdHttpProtocol : public XrdProtocol {
   
   friend class XrdHttpReq;
