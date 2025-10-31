@@ -39,10 +39,12 @@ jobs:
         sudo apt install -y devscripts equivs git
         sudo apt install -y abi-dumper abi-compliance-checker w3m
 
-    - name: Clone repository
+    # Fetch complete repo history to make both base and head available
+    - name: Checkout repository
       uses: actions/checkout@v5
       with:
         fetch-depth: 0
+        ref: ${{ github.head_ref || github.sha }}
 
     - name: Install XRootD build dependencies
       run: mk-build-deps --install --remove -s sudo debian/control <<< yes
