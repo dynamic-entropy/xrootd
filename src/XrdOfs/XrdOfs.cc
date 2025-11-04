@@ -2661,7 +2661,7 @@ int XrdOfs::Reformat(XrdOucErrInfo &myError)
 // Validate the response. The response will be invalid for older cmsd's
 //
    if (n != 4 || qsFmt != 'A')
-      {myError.setErrInfo(ENOTSUP,"space fctl operation not supported by cmsd");
+      {myError.setErrInfo(ENOTSUP,"space fctl operation not supported by msd");
        return SFS_ERROR;
       }
 

@@ -204,7 +204,7 @@ struct XrdSfsFACtl;
    the following scenarion. Object-A wraps object-B (the object here can be
    directory or file object). In forward mode weneed to create objects in
    reverse order (bottom to top) which is typically what you would do anyway
-   as you need to capture the pinter to the object your wrapping. So, using
+   as you need to capture the pointer to the object your wrapping. So, using
    newFile() as an example where sfsP points to the Interface being wrapped:
 
    XrdSfsFile *newFile(const char *user, int MonID)
