@@ -12,10 +12,28 @@ typedef std::array<std::array<XrdHttpMon::HttpInfo, XrdHttpMon::StatusCodes::sc_
     StatsMatrix;
 
 StatsMatrix XrdHttpMon::statsInfo{};
+RAtomic_uint XrdHttpMon::cGET{0}; 
+RAtomic_uint XrdHttpMon::cPUT = 0;
+RAtomic_uint XrdHttpMon::cHEAD = 0;
 
-XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream)
-    : flushPeriod(std::chrono::seconds(gStream->GetAutoFlush())), gStream(gStream)  {
-  eDest.logger(logP);
+XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream, XrdMonRoll *mrollP)
+    : gStream(gStream), mrollP(mrollP) {
+
+    eDest.logger(logP);
+    if (gStream) {
+        flushPeriod = std::chrono::seconds(gStream->GetAutoFlush());
+    }
+    if (mrollP) {
+        cGET = 0;
+        cPUT = 0;
+        cHEAD = 0;
+
+        XrdMonRoll::setMember verbSet[4] = {{"GET", cGET}, {"PUT", cPUT}, {"HEAD", cHEAD}, {0, XrdMonRoll::EOV}};
+        mrollP->Register(XrdMonRoll::AddOn, "httpreqstats", verbSet);
+
+    } else {
+        eDest.Say("XrdMonRoll Not Configured");
+    }
 }
 
 void XrdHttpMon::Report() {

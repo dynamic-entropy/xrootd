@@ -1,3 +1,4 @@
+#include "Xrd/XrdMonRoll.hh"
 #include "XrdHttpReq.hh"
 #include "XrdSys/XrdSysRAtomic.hh"
 
@@ -49,10 +50,11 @@ class XrdHttpMon {
 
     // Global stats table
     static std::array<std::array<HttpInfo, StatusCodes::sc_Count>, XrdHttpReq::ReqType::rtCount> statsInfo;
+    static RAtomic_uint cGET, cPUT, cHEAD;
 
     std::chrono::seconds flushPeriod;
 
-    XrdHttpMon(XrdSysLogger* logP, XrdXrootdGStream* gStream);
+    XrdHttpMon(XrdSysLogger* logP, XrdXrootdGStream* gStream, XrdMonRoll *mrollP);
 
     static void* Start(void* instance);
 
@@ -72,6 +74,7 @@ class XrdHttpMon {
     ~XrdHttpMon() {};
 
     XrdXrootdGStream* gStream;
+    XrdMonRoll* mrollP;
 
     void Report();
 };
