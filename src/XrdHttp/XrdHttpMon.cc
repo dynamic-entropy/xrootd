@@ -12,9 +12,52 @@ typedef std::array<std::array<XrdHttpMon::HttpInfo, XrdHttpMon::StatusCodes::sc_
     StatsMatrix;
 
 StatsMatrix XrdHttpMon::statsInfo{};
-RAtomic_uint XrdHttpMon::cGET{0}; 
-RAtomic_uint XrdHttpMon::cPUT = 0;
-RAtomic_uint XrdHttpMon::cHEAD = 0;
+// Persistent counters for each HTTP verb
+RAtomic_uint XrdHttpMon::httpCounters[XrdHttpReq::ReqType::rtCount] = {0};
+
+// Map enum: Move this to XrdHttpReq
+static const char* ReqTypeName(XrdHttpReq::ReqType type)
+{
+    using ReqType = XrdHttpReq::ReqType;
+    switch (type) {
+        case ReqType::rtUnknown:  return "UNKNOWN";
+        case ReqType::rtMalformed:return "MALFORMED";
+        case ReqType::rtGET:      return "GET";
+        case ReqType::rtHEAD:     return "HEAD";
+        case ReqType::rtPUT:      return "PUT";
+        case ReqType::rtOPTIONS:  return "OPTIONS";
+        case ReqType::rtPATCH:    return "PATCH";
+        case ReqType::rtDELETE:   return "DELETE";
+        case ReqType::rtPROPFIND: return "PROPFIND";
+        case ReqType::rtMKCOL:    return "MKCOL";
+        case ReqType::rtMOVE:     return "MOVE";
+        case ReqType::rtPOST:     return "POST";
+        case ReqType::rtCOPY:     return "COPY";
+        default:                  return "UNSET";
+    }
+}
+
+static XrdMonRoll::setMember *MakeVerbSet() {
+    using ReqType = XrdHttpReq::ReqType;
+    const int nVerbs = ReqType::rtCount;
+
+    alignas(XrdMonRoll::setMember) static unsigned char verbBuf[sizeof(XrdMonRoll::setMember) * (1 + nVerbs)];
+    static bool initialized = false;
+
+    // Cast the buffer to the XrdMonRoll::setMember type
+    XrdMonRoll::setMember *verbMemberSet = reinterpret_cast<XrdMonRoll::setMember *>(verbBuf);
+
+    if (!initialized) {
+        for (int i = 0; i < nVerbs; ++i) {
+            new (&verbMemberSet[i])
+                XrdMonRoll::setMember{ReqTypeName(static_cast<ReqType>(i)), XrdHttpMon::httpCounters[i]};
+        }
+        new (&verbMemberSet[nVerbs]) XrdMonRoll::setMember{0, XrdMonRoll::EOV};
+        initialized = true;
+    }
+
+    return verbMemberSet;
+}
 
 XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream, XrdMonRoll *mrollP)
     : gStream(gStream), mrollP(mrollP) {
@@ -24,12 +67,8 @@ XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream, XrdMonRoll
         flushPeriod = std::chrono::seconds(gStream->GetAutoFlush());
     }
     if (mrollP) {
-        cGET = 0;
-        cPUT = 0;
-        cHEAD = 0;
 
-        XrdMonRoll::setMember verbSet[4] = {{"GET", cGET}, {"PUT", cPUT}, {"HEAD", cHEAD}, {0, XrdMonRoll::EOV}};
-        mrollP->Register(XrdMonRoll::AddOn, "httpreqstats", verbSet);
+        mrollP->Register(XrdMonRoll::AddOn, "httpreqstats", MakeVerbSet());
 
     } else {
         eDest.Say("XrdMonRoll Not Configured");

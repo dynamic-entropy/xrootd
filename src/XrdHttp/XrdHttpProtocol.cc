@@ -1607,19 +1607,7 @@ void XrdHttpProtocol::Record() {
   if (code < 200) return;
   auto duration = std::chrono::steady_clock::now() - CurrentReq.startTime;
 
-  switch (CurrentReq.request) {
-    case XrdHttpReq::ReqType::rtGET:
-      httpMon->cGET++;
-      break;
-    case XrdHttpReq::ReqType::rtPUT:
-      httpMon->cPUT++;
-      break;
-    case XrdHttpReq::ReqType::rtHEAD:
-      httpMon->cHEAD++;
-      break;
-    default:
-      break;
-  }
+  httpMon->httpCounters[CurrentReq.request]++;
 
   switch (CurrentReq.monState) {
     case XrdHttpReq::MonitState::NEW:

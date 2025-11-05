@@ -50,7 +50,7 @@ class XrdHttpMon {
 
     // Global stats table
     static std::array<std::array<HttpInfo, StatusCodes::sc_Count>, XrdHttpReq::ReqType::rtCount> statsInfo;
-    static RAtomic_uint cGET, cPUT, cHEAD;
+    static RAtomic_uint httpCounters[XrdHttpReq::ReqType::rtCount];
 
     std::chrono::seconds flushPeriod;
 
