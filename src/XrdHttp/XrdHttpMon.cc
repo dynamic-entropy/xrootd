@@ -12,52 +12,27 @@ typedef std::array<std::array<XrdHttpMon::HttpInfo, XrdHttpMon::StatusCodes::sc_
     StatsMatrix;
 
 StatsMatrix XrdHttpMon::statsInfo{};
-// Persistent counters for each HTTP verb
-RAtomic_uint XrdHttpMon::httpCounters[XrdHttpReq::ReqType::rtCount] = {0};
 
-// Map enum: Move this to XrdHttpReq
-static const char* ReqTypeName(XrdHttpReq::ReqType type)
-{
-    using ReqType = XrdHttpReq::ReqType;
-    switch (type) {
-        case ReqType::rtUnknown:  return "UNKNOWN";
-        case ReqType::rtMalformed:return "MALFORMED";
-        case ReqType::rtGET:      return "GET";
-        case ReqType::rtHEAD:     return "HEAD";
-        case ReqType::rtPUT:      return "PUT";
-        case ReqType::rtOPTIONS:  return "OPTIONS";
-        case ReqType::rtPATCH:    return "PATCH";
-        case ReqType::rtDELETE:   return "DELETE";
-        case ReqType::rtPROPFIND: return "PROPFIND";
-        case ReqType::rtMKCOL:    return "MKCOL";
-        case ReqType::rtMOVE:     return "MOVE";
-        case ReqType::rtPOST:     return "POST";
-        case ReqType::rtCOPY:     return "COPY";
-        default:                  return "UNSET";
-    }
-}
+RAtomic_uint XrdHttpMon::verbCounters[XrdHttpReq::ReqType::rtCount] = {0};
 
-static XrdMonRoll::setMember *MakeVerbSet() {
-    using ReqType = XrdHttpReq::ReqType;
-    const int nVerbs = ReqType::rtCount;
+// NOTE: Keep this mapping aligned to the XrdHttpReq enum
+XrdMonRoll::setMember XrdHttpMon::verbCountersSchema[] = {
+    {"Unknown",   verbCounters[0]},
+    {"Malformed", verbCounters[1]},
+    {"GET",       verbCounters[2]},
+    {"HEAD",      verbCounters[3]},
+    {"PUT",       verbCounters[4]},
+    {"OPTIONS",   verbCounters[5]},
+    {"PATCH",     verbCounters[6]},
+    {"DELETE",    verbCounters[7]},
+    {"PROPFIND",  verbCounters[8]},
+    {"MKCOL",     verbCounters[9]},
+    {"MOVE",      verbCounters[10]},
+    {"POST",      verbCounters[11]},
+    {"COPY",      verbCounters[12]},
+    {0,           XrdMonRoll::EOV}
+};
 
-    alignas(XrdMonRoll::setMember) static unsigned char verbBuf[sizeof(XrdMonRoll::setMember) * (1 + nVerbs)];
-    static bool initialized = false;
-
-    // Cast the buffer to the XrdMonRoll::setMember type
-    XrdMonRoll::setMember *verbMemberSet = reinterpret_cast<XrdMonRoll::setMember *>(verbBuf);
-
-    if (!initialized) {
-        for (int i = 0; i < nVerbs; ++i) {
-            new (&verbMemberSet[i])
-                XrdMonRoll::setMember{ReqTypeName(static_cast<ReqType>(i)), XrdHttpMon::httpCounters[i]};
-        }
-        new (&verbMemberSet[nVerbs]) XrdMonRoll::setMember{0, XrdMonRoll::EOV};
-        initialized = true;
-    }
-
-    return verbMemberSet;
-}
 
 XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream, XrdMonRoll *mrollP)
     : gStream(gStream), mrollP(mrollP) {
@@ -67,9 +42,7 @@ XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream, XrdMonRoll
         flushPeriod = std::chrono::seconds(gStream->GetAutoFlush());
     }
     if (mrollP) {
-
-        mrollP->Register(XrdMonRoll::AddOn, "httpreqstats", MakeVerbSet());
-
+        mrollP->Register(XrdMonRoll::AddOn, "httpReqStats", verbCountersSchema);
     } else {
         eDest.Say("XrdMonRoll Not Configured");
     }

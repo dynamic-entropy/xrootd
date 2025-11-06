@@ -1607,7 +1607,7 @@ void XrdHttpProtocol::Record() {
   if (code < 200) return;
   auto duration = std::chrono::steady_clock::now() - CurrentReq.startTime;
 
-  httpMon->httpCounters[CurrentReq.request]++;
+  httpMon->verbCounters[CurrentReq.request]++;
 
   switch (CurrentReq.monState) {
     case XrdHttpReq::MonitState::NEW:
