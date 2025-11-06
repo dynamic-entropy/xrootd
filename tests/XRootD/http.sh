@@ -272,4 +272,54 @@ function test_http() {
 
   run_and_assert_http_and_error_code 200 "" \
     --header "Want-Digest: crc32c" -I "${HOST}/$alphabetFilePath"
+
+
+  ## Macaroon-based mkdir test
+  echo
+  echo "Testing macaroon-based mkdir via curl"
+
+  macaroonFile="${TMPDIR}/macaroon.json"
+  parentDir="${TMPDIR}/mac_parent_dir"
+  targetFile="${parentDir}/myfile"
+
+  # Request a macaroon for creating parent directories for a target file
+
+  curl -s -v -X POST \
+       -H "Content-Type: application/macaroon-request" \
+       "${HOST}/${targetFile}" \
+       -d '{"caveats": ["activity:LIST,DOWNLOAD,MANAGE,UPLOAD,DELETE"], "validity": "PT60M"}' \
+       -o "$macaroonFile"
+
+  export MACAROON=$(jq -r '.macaroon' $macaroonFile)
+
+
+  if [[ -z "$MACAROON" ]]; then
+    cat "$macaroonFile" >&2
+    error "Failed to obtain macaroon from ${HOST}/${parentDir}/dummy.file"
+  fi
+
+  echo "Obtained macaroon: ${MACAROON:0:40}..."
+
+  # Step 2: Use the macaroon to create a directory outisde the authorized parent
+  # run_and_assert_http_and_error_code 403 "" \
+  #   -X MKCOL \
+  #   -H "Authorization: Bearer $MACAROON" \
+  #   "${HOST}/${parentDir}/subdir_ok"
+
+  # Step 3: Attempt to mkdir inside the authorized scope
+  run_and_assert_http_and_error_code 201 "" \
+    -X MKCOL \
+    -H "Authorization: Bearer $MACAROON" \
+    "${HOST}/${parentDir}"
+
+  echo "Macaroon-based mkdir authorization behavior verified"
+
 }
+
+
+
+
+
+## Ask guilherme about authdb not working as expected
+## why is the permission to get macaroon not restricted?
+## But first try to do the operation - perhaps you can always get a macaroon but later fail to use it?

@@ -511,6 +511,8 @@ AuthzCheck::verify_path(const unsigned char * pred, size_t pred_sz)
     }
     // READ_METADATA permission for /foo/bar automatically implies permission
     // to READ_METADATA for /foo.
+    // Similarly, MKDIR for parent path is implied
+    // else if (m_oper == AOP_Stat || m_oper == AOP_Mkdir)
     else if (m_oper == AOP_Stat)
     {
         result = strncmp(m_path.c_str(), pred_str.c_str(), m_path.size());
