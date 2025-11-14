@@ -4,6 +4,8 @@
 #include "XrdSfs/XrdSfsInterface.hh"
 #include "XrdVersion.hh"
 
+#include <string>
+
 class MyXrdOfsPlugin : public XrdSfsFileSystem {
 
 public:
@@ -129,6 +131,10 @@ public:
 
     XrdSfsFile *m_wrapped;
     XrdSysError &m_log;
+
+private:
+    std::string tried;
+    bool open_verify();
 };
 
 #endif

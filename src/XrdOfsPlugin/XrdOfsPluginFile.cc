@@ -1,11 +1,33 @@
 #include "XrdOfsPlugin.hh"
+#include <string>
 
 FileWrapper::~FileWrapper() { m_log.Say("INFO:", "FileWrapper::~FileWrapper"); }
 
 int FileWrapper::open(const char *fileName, XrdSfsFileOpenMode openMode, mode_t createMode, const XrdSecEntity *client,
                       const char *opaque) {
     m_log.Say("INFO:", "FileWrapper::open");
-    return m_wrapped->open(fileName, openMode, createMode, client, opaque);
+
+    bool verified{false};
+    int rc;
+    while (!verified) {
+        // modify tried field to add more FileWrapper::tried
+        rc = m_wrapped->open(fileName, openMode, createMode, client, opaque);
+        verified = open_verify();
+    }
+
+    m_log.Say("INFO:", "MyXrdOfsPlugin::open: redirecting to ", error.getErrText(), ":",
+              std::to_string(error.getErrInfo()).c_str());
+    return rc;
+}
+
+bool FileWrapper::open_verify(){
+    // use xrdfs client to read?
+    return true; // on success
+
+    if (tried =="") tried = error.getErrInfo();
+    else tried += "," + error.getErrInfo();
+    return 0; // on failure
+
 }
 
 int FileWrapper::close() {

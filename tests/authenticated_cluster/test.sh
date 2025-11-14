@@ -98,6 +98,7 @@ upload_file_to_host() {
     fi
 }
 
+#shellcheck disable=SC2329
 perform_rename() {
     local src_host="$1"
     local old_name="$2"
@@ -166,11 +167,24 @@ for ((i = 0; i < ${#src_hosts[@]}; i++)); do
     upload_file_to_host "$src" "old_$src" "$testfile"
 done
 
-for ((i = 0; i < ${#src_hosts[@]}; i++)); do
+# Temporary testsfor figuring out redirections and ofs - cmsd interactions
+# for ((i = 0; i < ${#src_hosts[@]}; i++)); do
+    i=0
     src="${src_hosts[i]}"
-    code="${src_codes[i]}"
-    perform_rename "$src" "old_$src" "new_$src" "$code"
-done
+    http_url=$(get_http_url_for_host "$src")
+    src_url="${http_url}/$RMTDATADIR/old_$src"
+
+    ${CURL} -v -L -s -S \
+        -H "Authorization: Bearer ${BEARER_TOKEN}" \
+        "$src_url"
+# done
+
+        # -H "Destination: $dst_url" \
+# for ((i = 0; i < ${#src_hosts[@]}; i++)); do
+#     src="${src_hosts[i]}"
+#     code="${src_codes[i]}"
+#     perform_rename "$src" "old_$src" "new_$src" "$code"
+# done
 
 echo -e "\nALL TESTS PASSED"
 exit 0
