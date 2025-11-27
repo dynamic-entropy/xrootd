@@ -420,5 +420,15 @@ verify_checksum "adler32" "${LCLDATADIR}/${src}_empty.ref" "${LCLDATADIR}/${src}
 
 cleanup
 
+# Run thread limit tests
+echo "Running thread limit tests..."
+# shellcheck disable=SC1091
+if [[ -f "${CURRENT_SOURCE_DIR}/test_thread_limit.sh" ]]; then
+    bash "${CURRENT_SOURCE_DIR}/test_thread_limit.sh" || {
+        echo "Thread limit tests failed"
+        exit 1
+    }
+fi
+
 echo "ALL TESTS PASSED"
 exit 0

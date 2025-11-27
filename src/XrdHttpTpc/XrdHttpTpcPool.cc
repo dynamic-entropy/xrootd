@@ -20,6 +20,10 @@ decltype(TPCRequestManager::m_mutex) TPCRequestManager::m_mutex;
 decltype(TPCRequestManager::m_idle_timeout) TPCRequestManager::m_idle_timeout = std::chrono::minutes(1);
 unsigned TPCRequestManager::m_max_pending_ops = 20;  // default max_pending_transfers_per_queue
 unsigned TPCRequestManager::m_max_workers = 50;      // default mac_active_transfers_per_queue
+unsigned TPCRequestManager::m_max_global_threads = 0;  // 0 means no limit
+std::atomic<unsigned> TPCRequestManager::m_global_thread_count{0};
+std::mutex TPCRequestManager::m_thread_creation_mutex;
+std::condition_variable TPCRequestManager::m_thread_creation_cv;
 
 TPCRequestManager::TPCQueue::TPCWorker::TPCWorker(const std::string &label, int scitag, TPCQueue &queue)
     : m_label(label),
@@ -223,10 +227,25 @@ void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
     auto it = std::remove_if(m_workers.begin(), m_workers.end(), [&](std::unique_ptr<TPCWorker> &other) { return other.get() == worker; });
     m_workers.erase(it, m_workers.end());
 
+    // Notify the request manager that a thread is exiting
+    m_parent.NotifyThreadExit();
+
     if (m_workers.empty()) {
         m_done = true;
         lock.unlock();
         m_parent.Done(m_identifier);
+    }
+}
+
+void TPCRequestManager::TPCQueue::NotifyReduceThreads() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    // Find the first idle worker and set it to exit
+    for (auto &worker : m_workers) {
+        if (worker->IsIdle()) {
+            worker->SetShouldExit(true);
+            worker->m_cv.notify_one();
+            break;
+        }
     }
 }
 
@@ -237,6 +256,52 @@ void TPCRequestManager::Done(const std::string &ident) {
     auto iter = m_pool_map.find(ident);
     if (iter != m_pool_map.end()) {
         m_pool_map.erase(iter);
+    }
+}
+
+bool TPCRequestManager::RequestThreadCreation() {
+    // If no limit is set (0), always allow
+    if (m_max_global_threads == 0) {
+        return true;
+    }
+
+    std::unique_lock<std::mutex> lock(m_thread_creation_mutex);
+
+    // Check if we're under the limit
+    if (m_global_thread_count.load() < m_max_global_threads) {
+        return true;
+    }
+
+    // We're at the limit, try to reduce idle threads
+    {
+        std::shared_lock<std::shared_mutex> pool_lock(m_mutex);
+        for (auto &pair : m_pool_map) {
+            pair.second->NotifyReduceThreads();
+        }
+    }
+
+    // Wait up to 1 second for a thread to exit
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    bool thread_exited = m_thread_creation_cv.wait_until(lock, deadline, [this] {
+        return m_global_thread_count.load() < m_max_global_threads;
+    });
+
+    if (thread_exited && m_global_thread_count.load() < m_max_global_threads) {
+        return true;
+    }
+
+    return false;
+}
+
+void TPCRequestManager::NotifyThreadCreated() {
+    m_global_thread_count++;
+}
+
+void TPCRequestManager::NotifyThreadExit() {
+    unsigned prev_count = m_global_thread_count.fetch_sub(1);
+    if (prev_count > 0) {
+        std::lock_guard<std::mutex> lock(m_thread_creation_mutex);
+        m_thread_creation_cv.notify_one();
     }
 }
 
@@ -271,9 +336,20 @@ bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
     }
 
     if (m_workers.size() < m_max_workers) {
+        // Request permission to create a new thread from the request manager
+        if (!m_parent.RequestThreadCreation()) {
+            m_parent.m_log.Log(LogMask::Warning, "TPCQueue", "Thread creation denied due to global thread limit");
+            // Don't create the thread, but the request is already queued
+            // It will be processed when a worker becomes available or a thread exits
+            lk.unlock();
+            return true;
+        }
+
         auto worker = std::make_unique<TPCRequestManager::TPCQueue::TPCWorker>(handler.GetLabel(), handler.GetScitag(), *this);
         std::thread t(TPCRequestManager::TPCQueue::TPCWorker::RunStatic, worker.get());
         t.detach();
+        // Notify that a thread was successfully created (increment counter)
+        m_parent.NotifyThreadCreated();
         m_workers.push_back(std::move(worker));
     }
     lk.unlock();
@@ -301,8 +377,15 @@ TPCRequestManager::TPCRequest *TPCRequestManager::TPCQueue::TryConsume() {
 TPCRequestManager::TPCRequest *TPCRequestManager::TPCQueue::ConsumeUntil(std::chrono::steady_clock::duration dur, TPCWorker *worker) {
     std::unique_lock<std::mutex> lk(m_mutex);
     worker->SetIdle(true);
-    worker->m_cv.wait_for(lk, dur, [&] { return m_ops.size() > 0; });
+    worker->m_cv.wait_for(lk, dur, [&] { return m_ops.size() > 0 || worker->ShouldExit(); });
     worker->SetIdle(false);
+    
+    // Check if we should exit
+    if (worker->ShouldExit()) {
+        worker->SetShouldExit(false);  // Unset the flag
+        return nullptr;
+    }
+    
     if (m_ops.size() == 0) {
         return nullptr;
     }

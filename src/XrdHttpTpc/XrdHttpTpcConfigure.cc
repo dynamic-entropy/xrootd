@@ -114,6 +114,15 @@ bool TPCHandler::Configure(const char *configfn, XrdOucEnv *myEnv)
             int max_pending_ops;
             if (XrdOuca2x::a2i(m_log, "tpc.max_waiting_transfers_per_queue", val, &max_pending_ops, 1, 1000)) return false;
             m_request_manager.SetMaxIdleRequests(static_cast<unsigned>(max_pending_ops));
+        } else if (!strcmp("tpc.max_global_threads", val)) {
+            if (!(val = Config.GetWord())) {
+                Config.Close();
+                m_log.Emsg("Config", "tpc.max_global_threads value not specified.");
+                return false;
+            }
+            int max_global_threads;
+            if (XrdOuca2x::a2i(m_log, "tpc.max_global_threads", val, &max_global_threads, 0, 10000)) return false;
+            m_request_manager.SetMaxGlobalThreads(static_cast<unsigned>(max_global_threads));
         }
     }
     Config.Close();

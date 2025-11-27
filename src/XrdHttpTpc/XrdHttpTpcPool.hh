@@ -76,6 +76,10 @@ class TPCRequestManager final {
     void SetWorkerIdleTimeout(std::chrono::steady_clock::duration dur);
     void SetMaxWorkers(unsigned max_workers) { m_max_workers = max_workers; }
     void SetMaxIdleRequests(unsigned max_pending_ops) { m_max_pending_ops = max_pending_ops; }
+    void SetMaxGlobalThreads(unsigned max_global_threads) { m_max_global_threads = max_global_threads; }
+    // For testing purposes
+    static unsigned GetGlobalThreadCount() { return m_global_thread_count.load(); }
+    static unsigned GetMaxGlobalThreads() { return m_max_global_threads; }
 
    private:
     class TPCQueue {
@@ -89,6 +93,7 @@ class TPCRequestManager final {
         TPCRequest *ConsumeUntil(std::chrono::steady_clock::duration dur, TPCWorker *worker);
         void Done(TPCWorker *);
         bool IsDone() const { return m_done; }
+        void NotifyReduceThreads();
 
        private:
         class TPCWorker final {
@@ -101,6 +106,8 @@ class TPCRequestManager final {
 
             bool IsIdle() const { return m_idle; }
             void SetIdle(bool idle) { m_idle = idle; }
+            bool ShouldExit() const { return m_should_exit.load(std::memory_order_relaxed); }
+            void SetShouldExit(bool should_exit) { m_should_exit.store(should_exit, std::memory_order_relaxed); }
             std::condition_variable m_cv;
 
             static int closesocket_callback(void *clientp, curl_socket_t fd);
@@ -112,6 +119,7 @@ class TPCRequestManager final {
             bool RunCurl(CURLM *multi_handle, TPCRequest &request);
 
             bool m_idle{false};
+            std::atomic<bool> m_should_exit{false};
             // Label for this worker. Always set to the m_identifier of the queue it serves.
             const std::string m_label;
             TPCQueue &m_queue;
@@ -130,6 +138,9 @@ class TPCRequestManager final {
     };
 
     void Done(const std::string &ident);
+    bool RequestThreadCreation();
+    void NotifyThreadCreated();
+    void NotifyThreadExit();
 
     static std::shared_mutex m_mutex;
     XrdSysError &m_log;  // Log object for the request manager
@@ -137,6 +148,10 @@ class TPCRequestManager final {
     static std::unordered_map<std::string, std::shared_ptr<TPCQueue>> m_pool_map;
     static unsigned m_max_pending_ops;
     static unsigned m_max_workers;
+    static unsigned m_max_global_threads;
+    static std::atomic<unsigned> m_global_thread_count;
+    static std::mutex m_thread_creation_mutex;
+    static std::condition_variable m_thread_creation_cv;
     static std::once_flag m_init_once;
     XrdOucEnv &m_xrdEnv;
 };
