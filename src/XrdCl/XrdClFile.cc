@@ -73,6 +73,12 @@ namespace XrdCl
     pImpl = new FileImpl( virtRedirect == EnableVirtRedirect, pPlugIn );
   }
 
+  File::File(const std::string &url, bool enablePlugIns): pPlugIn(0), pEnablePlugIns(enablePlugIns) {
+
+    pImpl = new FileImpl(pPlugIn);
+    InitialisePlugin(url);
+  }
+
   //----------------------------------------------------------------------------
   // Destructor
   //----------------------------------------------------------------------------
@@ -93,6 +99,23 @@ namespace XrdCl
     delete pPlugIn;
   }
 
+  void File::InitialisePlugin(const std::string &url) {
+
+    if (pEnablePlugIns && !pPlugIn) {
+      Log *log = DefaultEnv::GetLog();
+      PlugInFactory *fact = DefaultEnv::GetPlugInManager()->GetFactory(url);
+      if (fact) {
+        pPlugIn = fact->CreateFile(url);
+        if (!pPlugIn) {
+          log->Error(FileMsg,
+                     "Plug-in factory failed to produce a plug-in "
+                     "for %s, continuing without one",
+                     url.c_str());
+        }
+      }
+    }
+  }
+
   //----------------------------------------------------------------------------
   // Open the file pointed to by the given URL - async
   //----------------------------------------------------------------------------
@@ -105,20 +128,7 @@ namespace XrdCl
     //--------------------------------------------------------------------------
     // Check if we need to install and run a plug-in for this URL
     //--------------------------------------------------------------------------
-    if( pEnablePlugIns && !pPlugIn )
-    {
-      Log *log = DefaultEnv::GetLog();
-      PlugInFactory *fact = DefaultEnv::GetPlugInManager()->GetFactory( url );
-      if( fact )
-      {
-        pPlugIn = fact->CreateFile( url );
-        if( !pPlugIn )
-        {
-          log->Error( FileMsg, "Plug-in factory failed to produce a plug-in "
-                      "for %s, continuing without one", url.c_str() );
-        }
-      }
-    }
+    InitialisePlugin(url);
 
     //--------------------------------------------------------------------------
     // Open the file
