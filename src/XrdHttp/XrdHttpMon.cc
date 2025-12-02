@@ -16,52 +16,54 @@ StatsMatrix XrdHttpMon::statsInfo{};
 bool XrdHttpMon::hasGStream = false;
 bool XrdHttpMon::hasMonRoll = false;
 
-RAtomic_uint XrdHttpMon::verbCounters[XrdHttpReq::ReqType::rtCount] = {0};
-RAtomic_uint XrdHttpMon::statusCounters[XrdHttpMon::StatusCodes::sc_Count] = {0};
+RAtomic_uint64_t XrdHttpMon::verbCounters[XrdHttpReq::ReqType::rtCount] = {0};
+RAtomic_uint64_t XrdHttpMon::statusCounters[XrdHttpMon::StatusCodes::sc_Count] = {0};
 
+// Combined schema for HTTP statistics
+// This creates a JSON structure: {"httpReqStats": {...}, "httpStatusCodeStats": {...}}
+std::vector<XrdMonRoll::Item> XrdHttpMon::statsSchema = {
 // NOTE: Keep this mapping aligned to the XrdHttpReq enum
-XrdMonRoll::setMember XrdHttpMon::verbCountersSchema[] = {
-    {"Unknown",   verbCounters[0]},
-    {"Malformed", verbCounters[1]},
-    {"GET",       verbCounters[2]},
-    {"HEAD",      verbCounters[3]},
-    {"PUT",       verbCounters[4]},
-    {"OPTIONS",   verbCounters[5]},
-    {"PATCH",     verbCounters[6]},
-    {"DELETE",    verbCounters[7]},
-    {"PROPFIND",  verbCounters[8]},
-    {"MKCOL",     verbCounters[9]},
-    {"MOVE",      verbCounters[10]},
-    {"POST",      verbCounters[11]},
-    {"COPY",      verbCounters[12]},
-    {0,           XrdMonRoll::EOV}
-};
+    XrdMonRoll::Item("request", XrdMonRoll::Item::Schema::begObject),
+        XrdMonRoll::Item("Unknown",   verbCounters[0]),
+        XrdMonRoll::Item("Malformed", verbCounters[1]),
+        XrdMonRoll::Item("GET",       verbCounters[2]),
+        XrdMonRoll::Item("HEAD",      verbCounters[3]),
+        XrdMonRoll::Item("PUT",       verbCounters[4]),
+        XrdMonRoll::Item("OPTIONS",   verbCounters[5]),
+        XrdMonRoll::Item("PATCH",     verbCounters[6]),
+        XrdMonRoll::Item("DELETE",    verbCounters[7]),
+        XrdMonRoll::Item("PROPFIND",  verbCounters[8]),
+        XrdMonRoll::Item("MKCOL",     verbCounters[9]),
+        XrdMonRoll::Item("MOVE",      verbCounters[10]),
+        XrdMonRoll::Item("POST",      verbCounters[11]),
+        XrdMonRoll::Item("COPY",      verbCounters[12]),
+    XrdMonRoll::Item("request", XrdMonRoll::Item::Schema::endObject),
 
 // NOTE: Keep this mapping strictly aligned with StatusCodes enum XrdHttpMon::StatusCode
 // The order and number of entries MUST match.
-XrdMonRoll::setMember XrdHttpMon::statusCountersSchema[] = {
-    {"100", statusCounters[sc_100]},
-    {"200", statusCounters[sc_200]},
-    {"201", statusCounters[sc_201]},
-    {"202", statusCounters[sc_202]},
-    {"206", statusCounters[sc_206]},
-    {"207", statusCounters[sc_207]},
-    {"302", statusCounters[sc_302]},
-    {"307", statusCounters[sc_307]},
-    {"400", statusCounters[sc_400]},
-    {"401", statusCounters[sc_401]},
-    {"403", statusCounters[sc_403]},
-    {"404", statusCounters[sc_404]},
-    {"405", statusCounters[sc_405]},
-    {"409", statusCounters[sc_409]},
-    {"416", statusCounters[sc_416]},
-    {"423", statusCounters[sc_423]},
-    {"500", statusCounters[sc_500]},
-    {"502", statusCounters[sc_502]},
-    {"504", statusCounters[sc_504]},
-    {"507", statusCounters[sc_507]},
-    {"OTHERS", statusCounters[sc_UNKNOWN]},
-    {0, XrdMonRoll::EOV}
+    XrdMonRoll::Item("response", XrdMonRoll::Item::Schema::begObject),
+        XrdMonRoll::Item("100", statusCounters[sc_100]),
+        XrdMonRoll::Item("200", statusCounters[sc_200]),
+        XrdMonRoll::Item("201", statusCounters[sc_201]),
+        XrdMonRoll::Item("202", statusCounters[sc_202]),
+        XrdMonRoll::Item("206", statusCounters[sc_206]),
+        XrdMonRoll::Item("207", statusCounters[sc_207]),
+        XrdMonRoll::Item("302", statusCounters[sc_302]),
+        XrdMonRoll::Item("307", statusCounters[sc_307]),
+        XrdMonRoll::Item("400", statusCounters[sc_400]),
+        XrdMonRoll::Item("401", statusCounters[sc_401]),
+        XrdMonRoll::Item("403", statusCounters[sc_403]),
+        XrdMonRoll::Item("404", statusCounters[sc_404]),
+        XrdMonRoll::Item("405", statusCounters[sc_405]),
+        XrdMonRoll::Item("409", statusCounters[sc_409]),
+        XrdMonRoll::Item("416", statusCounters[sc_416]),
+        XrdMonRoll::Item("423", statusCounters[sc_423]),
+        XrdMonRoll::Item("500", statusCounters[sc_500]),
+        XrdMonRoll::Item("502", statusCounters[sc_502]),
+        XrdMonRoll::Item("504", statusCounters[sc_504]),
+        XrdMonRoll::Item("507", statusCounters[sc_507]),
+        XrdMonRoll::Item("OTHERS", statusCounters[sc_UNKNOWN]),
+    XrdMonRoll::Item("response", XrdMonRoll::Item::Schema::endObject)
 };
 
 XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream, XrdMonRoll *mrollP)
@@ -75,8 +77,7 @@ XrdHttpMon::XrdHttpMon(XrdSysLogger *logP, XrdXrootdGStream *gStream, XrdMonRoll
 
     if (mrollP != nullptr) {
         hasMonRoll = true;
-        mrollP->Register(XrdMonRoll::AddOn, "httpReqStats", verbCountersSchema);
-        mrollP->Register(XrdMonRoll::AddOn, "httpStatusCodeStats", statusCountersSchema);
+        mrollP->Register(XrdMonRoll::AddOn, "http_plugin", statsSchema);
     }
 }
 

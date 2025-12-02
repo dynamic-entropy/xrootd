@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <string>
+#include <vector>
 
 class XrdXrootdGStream;
 class XrdSysLogger;
@@ -56,11 +57,9 @@ class XrdHttpMon {
     static bool hasGStream;  // True if gStream monitoring is enabled (needs detailed metrics)
     static bool hasMonRoll;  // True if MonRoll summary monitoring is enabled (needs simple counters)
 
-    static RAtomic_uint verbCounters[XrdHttpReq::ReqType::rtCount];
-    static XrdMonRoll::setMember verbCountersSchema[XrdHttpReq::ReqType::rtCount + 1];
-
-    static RAtomic_uint statusCounters[StatusCodes::sc_Count];
-    static XrdMonRoll::setMember statusCountersSchema[StatusCodes::sc_Count + 1];
+    static RAtomic_uint64_t verbCounters[XrdHttpReq::ReqType::rtCount];
+    static RAtomic_uint64_t statusCounters[StatusCodes::sc_Count];
+    static std::vector<XrdMonRoll::Item> statsSchema;
 
     std::chrono::seconds flushPeriod;
 
