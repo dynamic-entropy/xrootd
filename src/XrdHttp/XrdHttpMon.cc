@@ -8,7 +8,7 @@
 
 XrdSysError eDest(0, "HttpMon");
 
-typedef std::array<std::array<XrdHttpMon::HttpInfo, XrdHttpMon::StatusCodes::sc_Count>, XrdHttpReq::ReqType::rtCount>
+typedef std::array<std::array<XrdHttpMon::HttpInfo, XrdHttpMon::StatusCodes::sc_Count>, XrdHttp::ReqType::rtCount>
     StatsMatrix;
 
 StatsMatrix XrdHttpMon::statsInfo{};
@@ -16,13 +16,13 @@ StatsMatrix XrdHttpMon::statsInfo{};
 bool XrdHttpMon::hasGStream = false;
 bool XrdHttpMon::hasMonRoll = false;
 
-RAtomic_uint64_t XrdHttpMon::verbCounters[XrdHttpReq::ReqType::rtCount] = {0};
+RAtomic_uint64_t XrdHttpMon::verbCounters[XrdHttp::ReqType::rtCount] = {0};
 RAtomic_uint64_t XrdHttpMon::statusCounters[XrdHttpMon::StatusCodes::sc_Count] = {0};
 
 // Combined schema for HTTP statistics
 // This creates a JSON structure: {"httpReqStats": {...}, "httpStatusCodeStats": {...}}
 std::vector<XrdMonRoll::Item> XrdHttpMon::statsSchema = {
-// NOTE: Keep this mapping aligned to the XrdHttpReq enum
+// NOTE: Keep this mapping aligned to the XrdHttp::ReqType enum
     XrdMonRoll::Item("request", XrdMonRoll::Item::Schema::begObject),
         XrdMonRoll::Item("Unknown",   verbCounters[0]),
         XrdMonRoll::Item("Malformed", verbCounters[1]),
@@ -96,31 +96,31 @@ void* XrdHttpMon::Start(void* instance) {
     }
 }
 
-void XrdHttpMon::RecordCount(XrdHttpReq::ReqType op, StatusCodes sc) {
-    if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
+void XrdHttpMon::RecordCount(XrdHttp::ReqType op, StatusCodes sc) {
+    if (op >= XrdHttp::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
 
     auto& info = statsInfo[op][sc];
     info.count++;
 }
 
-void XrdHttpMon::RecordSuccess(XrdHttpReq::ReqType op, StatusCodes sc, std::chrono::steady_clock::duration duration) {
-    if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
+void XrdHttpMon::RecordSuccess(XrdHttp::ReqType op, StatusCodes sc, std::chrono::steady_clock::duration duration) {
+    if (op >= XrdHttp::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
 
     auto& info = statsInfo[op][sc];
     info.success++;
     info.duration_us += std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
 }
 
-void XrdHttpMon::RecordErrProt(XrdHttpReq::ReqType op, StatusCodes sc, std::chrono::steady_clock::duration duration) {
-    if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
+void XrdHttpMon::RecordErrProt(XrdHttp::ReqType op, StatusCodes sc, std::chrono::steady_clock::duration duration) {
+    if (op >= XrdHttp::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
 
     auto& info = statsInfo[op][sc];
     info.error_xrootd++;
     info.duration_us += std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
 }
 
-void XrdHttpMon::RecordErrNet(XrdHttpReq::ReqType op, StatusCodes sc, std::chrono::steady_clock::duration duration) {
-    if (op >= XrdHttpReq::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
+void XrdHttpMon::RecordErrNet(XrdHttp::ReqType op, StatusCodes sc, std::chrono::steady_clock::duration duration) {
+    if (op >= XrdHttp::ReqType::rtCount || sc >= StatusCodes::sc_Count) return;
 
     auto& info = statsInfo[op][sc];
     info.error_network++;
@@ -134,8 +134,8 @@ std::string XrdHttpMon::GetMonitoringJson() {
     oss << "{";
 
     bool first = true;
-    for (size_t op = 0; op < XrdHttpReq::ReqType::rtCount; ++op) {
-        std::string opName = GetOperationString(static_cast<XrdHttpReq::ReqType>(op));
+    for (size_t op = 0; op < XrdHttp::ReqType::rtCount; ++op) {
+        std::string opName = GetOperationString(static_cast<XrdHttp::ReqType>(op));
         for (size_t sc = 0; sc < StatusCodes::sc_Count; ++sc) {
             auto& info = statsInfo[op][sc];
 
@@ -166,27 +166,27 @@ std::string XrdHttpMon::GetMonitoringJson() {
     return oss.str();
 }
 
-std::string XrdHttpMon::GetOperationString(XrdHttpReq::ReqType op) {
+std::string XrdHttpMon::GetOperationString(XrdHttp::ReqType op) {
     switch (op) {
-        case XrdHttpReq::ReqType::rtDELETE:
+        case XrdHttp::ReqType::rtDELETE:
             return "DELETE";
-        case XrdHttpReq::ReqType::rtHEAD:
+        case XrdHttp::ReqType::rtHEAD:
             return "HEAD";
-        case XrdHttpReq::ReqType::rtGET:
+        case XrdHttp::ReqType::rtGET:
             return "GET";
-        case XrdHttpReq::ReqType::rtMKCOL:
+        case XrdHttp::ReqType::rtMKCOL:
             return "MKCOL";
-        case XrdHttpReq::ReqType::rtMOVE:
+        case XrdHttp::ReqType::rtMOVE:
             return "MOVE";
-        case XrdHttpReq::ReqType::rtOPTIONS:
+        case XrdHttp::ReqType::rtOPTIONS:
             return "OPTIONS";
-        case XrdHttpReq::ReqType::rtPROPFIND:
+        case XrdHttp::ReqType::rtPROPFIND:
             return "PROPFIND";
-        case XrdHttpReq::ReqType::rtPUT:
+        case XrdHttp::ReqType::rtPUT:
             return "PUT";
-        case XrdHttpReq::ReqType::rtCOPY:
+        case XrdHttp::ReqType::rtCOPY:
             return "COPY";
-        case XrdHttpReq::ReqType::rtMalformed:
+        case XrdHttp::ReqType::rtMalformed:
             return "Malformed";
         default:
             return "UNKNOWN";

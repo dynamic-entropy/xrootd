@@ -41,6 +41,7 @@
 #include "XProtocol/XProtocol.hh"
 #include "XrdHttpChecksumHandler.hh"
 #include "XrdHttpReadRangeHandler.hh"
+#include "XrdHttpTypes.hh"
 #include "XrdOuc/XrdOucString.hh"
 #include "XrdXrootd/XrdXrootdBridge.hh"
 
@@ -69,26 +70,9 @@ public:
   // is supposed to populate these fields, for fast access while
   // processing the request
 
-  /// These are the HTTP/DAV requests that we support
-  // Any changes here should also reflect in XrdHttpMon::verbCountersSchema to capture statistics of requests by verb
-  // The count and order or verbs listed should be consistent with the monitoring counters
-  enum ReqType : int {
-    rtUnset = -1,
-    rtUnknown = 0,
-    rtMalformed,
-    rtGET,
-    rtHEAD,
-    rtPUT,
-    rtOPTIONS,
-    rtPATCH,
-    rtDELETE,
-    rtPROPFIND,
-    rtMKCOL,
-    rtMOVE,
-    rtPOST,
-    rtCOPY,
-    rtCount
-  };
+  // ReqType enum is now in XrdHttpTypes.hh to avoid circular dependencies
+  // Use XrdHttp::ReqType or the alias below
+  using ReqType = XrdHttp::ReqType;
 
 private:
   // HTTP response parameters to be sent back to the user

@@ -640,7 +640,7 @@ int XrdHttpProtocol::Process(XrdLink *lp) // We ignore the argument here
       }
 
 
-      if (CurrentReq.request == CurrentReq.rtUnset) {
+      if (CurrentReq.request == XrdHttp::ReqType::rtUnset) {
         TRACE(DEBUG, " Parsing first line: " << traceLine.c_str());
         int result = CurrentReq.parseFirstLine((char *)tmpline.c_str(), rc);
         if (result < 0) {
@@ -684,8 +684,8 @@ int XrdHttpProtocol::Process(XrdLink *lp) // We ignore the argument here
   // If we are in self-redirect mode, then let's do it
   // Do selfredirect only with 'simple' requests, otherwise poor clients may misbehave
   if (ishttps && ssldone && selfhttps2http &&
-    ( (CurrentReq.request == XrdHttpReq::rtGET) || (CurrentReq.request == XrdHttpReq::rtPUT) ||
-    (CurrentReq.request == XrdHttpReq::rtPROPFIND)) ) {
+    ( (CurrentReq.request == XrdHttp::ReqType::rtGET) || (CurrentReq.request == XrdHttp::ReqType::rtPUT) ||
+    (CurrentReq.request == XrdHttp::ReqType::rtPROPFIND)) ) {
     char hash[512];
     time_t timenow = time(0);
 

@@ -13,6 +13,7 @@ add_library(XrdHttpUtils SHARED
   XrdHttpProtocol.cc         XrdHttpProtocol.hh
   XrdHttpReadRangeHandler.cc XrdHttpReadRangeHandler.hh
   XrdHttpReq.cc              XrdHttpReq.hh
+                             XrdHttpTypes.hh
                              XrdHttpSecXtractor.hh
   XrdHttpSecurity.cc
                              XrdHttpStatic.hh

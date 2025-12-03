@@ -127,14 +127,14 @@ int XrdHttpReq::parseLine(char *line, int len) {
   char *p = strchr((char *) line, (int) ':');
   if (!p) {
 
-    request = rtMalformed;
+    request = ReqType::rtMalformed;
     return -1;
   }
 
   pos = (p - line);
   if (pos > (MAX_TK_LEN - 1)) {
 
-    request = rtMalformed;
+    request = ReqType::rtMalformed;
     return -2;
   }
 
@@ -149,7 +149,7 @@ int XrdHttpReq::parseLine(char *line, int len) {
     // because external plugins may need to process it differently                                                                                                                          
     std::string ss = val;
     if(ss.length() >= 2 && ss.substr(ss.length() - 2, 2) != "\r\n") {
-      request = rtMalformed;
+      request = ReqType::rtMalformed;
       return -3;
     }
     trim(ss);
@@ -265,10 +265,10 @@ void XrdHttpReq::parseScitag(const std::string & val) {
     }
   }
   addCgi("scitag.flow", std::to_string(mScitag));
-  if(request == ReqType::rtGET || request == ReqType::rtPUT) {
+  if(request == XrdHttp::ReqType::rtGET || request == XrdHttp::ReqType::rtPUT) {
     // We specify to the packet marking handle the type of transfer this request is
     // so the source and destination in the firefly are properly set
-    addCgi("pmark.appname",this->request == ReqType::rtGET ? "http-get" : "http-put");
+    addCgi("pmark.appname",this->request == XrdHttp::ReqType::rtGET ? "http-get" : "http-put");
   }
 }
 
@@ -284,7 +284,7 @@ int XrdHttpReq::parseFirstLine(char *line, int len) {
   // Look for the first space-delimited token
   char *p = strchr((char *) line, (int) ' ');
   if (!p) {
-    request = rtMalformed;
+    request = ReqType::rtMalformed;
     return -1;
   }
 
@@ -292,14 +292,14 @@ int XrdHttpReq::parseFirstLine(char *line, int len) {
   pos = p - line;
   // The first token cannot be too long
   if (pos > MAX_TK_LEN - 1) {
-    request = rtMalformed;
+    request = ReqType::rtMalformed;
     return -2;
   }
 
   // The first space-delimited char cannot be the first one
   // this allows to deal with the case when a client sends a first line that starts with a space " GET / HTTP/1.1"
   if(pos == 0) {
-      request = rtMalformed;
+      request = ReqType::rtMalformed;
       return -4;
   }
 
@@ -316,7 +316,7 @@ int XrdHttpReq::parseFirstLine(char *line, int len) {
     p = strchr((char *) val, (int) ' ');
 
     if (!p) {
-      request = rtMalformed;
+      request = ReqType::rtMalformed;
       line[pos] = ' ';
       return -3;
     }
@@ -328,29 +328,29 @@ int XrdHttpReq::parseFirstLine(char *line, int len) {
 
     // Xlate the known header lines
     if (!strcmp(key, "GET")) {
-      request = rtGET;
+      request = ReqType::rtGET;
     } else if (!strcmp(key, "HEAD")) {
-      request = rtHEAD;
+      request = ReqType::rtHEAD;
     } else if (!strcmp(key, "PUT")) {
-      request = rtPUT;
+      request = ReqType::rtPUT;
     } else if (!strcmp(key, "POST")) {
-      request = rtPOST;
+      request = ReqType::rtPOST;
     } else if (!strcmp(key, "PATCH")) {
-      request = rtPATCH;
+      request = ReqType::rtPATCH;
     } else if (!strcmp(key, "OPTIONS")) {
-      request = rtOPTIONS;
+      request = ReqType::rtOPTIONS;
     } else if (!strcmp(key, "DELETE")) {
-      request = rtDELETE;
+      request = ReqType::rtDELETE;
     } else if (!strcmp(key, "PROPFIND")) {
-      request = rtPROPFIND;
+      request = ReqType::rtPROPFIND;
     } else if (!strcmp(key, "MKCOL")) {
-      request = rtMKCOL;
+      request = ReqType::rtMKCOL;
     } else if (!strcmp(key, "MOVE")) {
-      request = rtMOVE;
+      request = ReqType::rtMOVE;
     } else if (!strcmp(key, "COPY")) {
-      request = rtCOPY;
+      request = ReqType::rtCOPY;
     } else {
-      request = rtUnknown;
+      request = ReqType::rtUnknown;
     }
     
     requestverb = key;
@@ -546,7 +546,7 @@ bool XrdHttpReq::Error(XrdXrootd::Bridge::Context &info, //!< the result context
   // If we are servicing a GET on a directory, it'll generate an error for the default
   // OSS (we don't assume this is always true).  Catch and suppress the error so we can instead
   // generate a directory listing (if configured).
-  if ((request == rtGET) && (xrdreq.header.requestid == ntohs(kXR_open)) && (xrderrcode == kXR_isDirectory))
+  if ((request == ReqType::rtGET) && (xrdreq.header.requestid == ntohs(kXR_open)) && (xrderrcode == kXR_isDirectory))
     return true;
   
   return rc == 0;
@@ -635,7 +635,7 @@ bool XrdHttpReq::Redir(XrdXrootd::Bridge::Context &info, //!< the result context
   
   TRACE(REQ, " XrdHttpReq::Redir Redirecting to " << obfuscateAuth(redirdest.c_str()).c_str());
 
-  if (request != rtGET)
+  if (request != ReqType::rtGET)
     prot->SendSimpleResp(307, NULL, (char *) redirdest.c_str(), 0, 0, keepalive);
   else
     prot->SendSimpleResp(302, NULL, (char *) redirdest.c_str(), 0, 0, keepalive);
@@ -887,7 +887,7 @@ int XrdHttpReq::ProcessHTTPReq() {
   int query_param_status = 0;
   if (!m_appended_asize) {
     m_appended_asize = true;
-    if (request == rtPUT && length) {
+    if (request == ReqType::rtPUT && length) {
       if (query_param_status == 0) {
         query_param_status = strchr(resourceplusopaque.c_str(), '?') ? 1 : 2;
       }
@@ -944,15 +944,15 @@ int XrdHttpReq::ProcessHTTPReq() {
   //
 
   switch (request) {
-    case XrdHttpReq::rtUnset:
-    case XrdHttpReq::rtUnknown:
-    case XrdHttpReq::rtMalformed: {
+    case XrdHttpReq::ReqType::rtUnset:
+    case XrdHttpReq::ReqType::rtUnknown:
+    case XrdHttpReq::ReqType::rtMalformed: {
       generateWebdavErrMsg();
       prot->SendSimpleResp(httpStatusCode, NULL, NULL, httpErrorBody.c_str(), httpErrorBody.length(), false);
       reset();
       return -1;
     }
-    case XrdHttpReq::rtHEAD:
+    case XrdHttpReq::ReqType::rtHEAD:
     {
       if (reqstate == 0) {
         // Always start with Stat; in the case of a checksum request, we'll have a follow-up query
@@ -975,7 +975,7 @@ int XrdHttpReq::ProcessHTTPReq() {
         return 1;
       }
     }
-    case XrdHttpReq::rtGET:
+    case XrdHttpReq::ReqType::rtGET:
     {
         int retval = keepalive ? 1 : -1; // reset() clears keepalive
 
@@ -1259,9 +1259,9 @@ int XrdHttpReq::ProcessHTTPReq() {
       } // switch (reqstate)
 
 
-    } // case XrdHttpReq::rtGET
+    } // case XrdHttpReq::ReqType::rtGET
 
-    case XrdHttpReq::rtPUT:
+    case XrdHttpReq::ReqType::rtPUT:
     {
       //if (prot->ishttps) {
       //prot->SendSimpleResp(501, NULL, NULL, (char *) "HTTPS not supported yet for direct writing. Sorry.", 0);
@@ -1443,14 +1443,14 @@ int XrdHttpReq::ProcessHTTPReq() {
       break;
 
     }
-    case XrdHttpReq::rtOPTIONS:
+    case XrdHttpReq::ReqType::rtOPTIONS:
     {
       prot->SendSimpleResp(200, NULL, (char *) "DAV: 1\r\nDAV: <http://apache.org/dav/propset/fs/1>\r\nAllow: HEAD,GET,PUT,PROPFIND,DELETE,OPTIONS", NULL, 0, keepalive);
       bool ret_keepalive = keepalive; // reset() clears keepalive
       reset();
       return ret_keepalive ? 1 : -1;
     }
-    case XrdHttpReq::rtDELETE:
+    case XrdHttpReq::ReqType::rtDELETE:
     {
 
 
@@ -1518,13 +1518,13 @@ int XrdHttpReq::ProcessHTTPReq() {
 
 
     }
-    case XrdHttpReq::rtPATCH:
+    case XrdHttpReq::ReqType::rtPATCH:
     {
       prot->SendSimpleResp(501, NULL, NULL, (char *) "Request not supported yet.", 0, false);
 
       return -1;
     }
-    case XrdHttpReq::rtPROPFIND:
+    case XrdHttpReq::ReqType::rtPROPFIND:
     {
 
 
@@ -1608,7 +1608,7 @@ int XrdHttpReq::ProcessHTTPReq() {
 
       break;
     }
-    case XrdHttpReq::rtMKCOL:
+    case XrdHttpReq::ReqType::rtMKCOL:
     {
 
       // --------- MKDIR
@@ -1629,7 +1629,7 @@ int XrdHttpReq::ProcessHTTPReq() {
       // We don't want to be invoked again after this request is finished
       return 1;
     }
-    case XrdHttpReq::rtMOVE:
+    case XrdHttpReq::ReqType::rtMOVE:
     {
       // Incase of a move cgi parameters present in the CGI str
       // are appended to the destination in case of a MOVE.
@@ -2065,17 +2065,17 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
   }
 
   switch (request) {
-    case XrdHttpReq::rtUnknown:
+    case XrdHttpReq::ReqType::rtUnknown:
     {
       prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed 1", 0, false);
       return -1;
     }
-    case XrdHttpReq::rtMalformed:
+    case XrdHttpReq::ReqType::rtMalformed:
     {
       prot->SendSimpleResp(400, NULL, NULL, (char *) "Request malformed 2", 0, false);
       return -1;
     }
-    case XrdHttpReq::rtHEAD:
+    case XrdHttpReq::ReqType::rtHEAD:
     {
       if (xrdresp != kXR_ok) {
         // NOTE that HEAD MUST NOT return a body, even in the case of failure.
@@ -2137,9 +2137,9 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
         }
       }
     }
-    case XrdHttpReq::rtGET:
+    case XrdHttpReq::ReqType::rtGET:
     {
-      // To duplicate the state diagram from the rtGET request state
+      // To duplicate the state diagram from the ReqType::rtGET request state
       // - 0: Perform an open request
       // - 1: Perform a checksum request on the resource (only if requested in header; otherwise skipped)
       // - 2: Perform a close (for directory listings only)
@@ -2278,7 +2278,7 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
       break;
     } // case GET
 
-    case XrdHttpReq::rtPUT:
+    case XrdHttpReq::ReqType::rtPUT:
     {
       if (!fopened) {
         if (xrdresp != kXR_ok) {
@@ -2346,7 +2346,7 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
 
 
 
-    case XrdHttpReq::rtDELETE:
+    case XrdHttpReq::ReqType::rtDELETE:
     {
 
       if (xrdresp != kXR_ok) {
@@ -2393,7 +2393,7 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
 
     }
 
-    case XrdHttpReq::rtPROPFIND:
+    case XrdHttpReq::ReqType::rtPROPFIND:
     {
 
       if (xrdresp == kXR_error) {
@@ -2625,7 +2625,7 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
 
     } // case propfind
 
-    case XrdHttpReq::rtMKCOL:
+    case XrdHttpReq::ReqType::rtMKCOL:
     {
 
       if (xrdresp != kXR_ok) {
@@ -2642,7 +2642,7 @@ int XrdHttpReq::PostProcessHTTPReq(bool final_) {
       return keepalive ? 1 : -1;
 
     }
-    case XrdHttpReq::rtMOVE:
+    case XrdHttpReq::ReqType::rtMOVE:
     {
 
       if (xrdresp != kXR_ok) {
@@ -2744,7 +2744,7 @@ void XrdHttpReq::reset() {
   ralist.clear();
   ralist.shrink_to_fit();
 
-  request = rtUnset;
+  request = ReqType::rtUnset;
   resource = "";
   allheaders.clear();
 
