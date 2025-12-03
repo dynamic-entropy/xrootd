@@ -13,6 +13,14 @@
 class XrdXrootdGStream;
 class XrdSysLogger;
 
+enum XrdHttpMonReqState : int {
+  NEW = 0,       // Uninitialised state
+  ACTIVE = 1,    // First Call to Process Request
+  ERR_NET = 2,   // Network Error
+  ERR_PROT = 3,  // Filesystem/XRootD error
+  DONE = 4       // Final state
+};
+
 class XrdHttpMon {
    public:
     // Supported HTTP status codes
@@ -110,6 +118,12 @@ class XrdHttpMon {
     XrdMonRoll* mrollP;
 
     void Report();
+};
+
+struct XrdHttpMonState {
+  XrdHttpMonReqState state;
+  std::chrono::steady_clock::time_point startTime;
+  XrdHttpMonState() : state(XrdHttpMonReqState::NEW), startTime(std::chrono::steady_clock::time_point::min()) {}
 };
 
 #endif /* XRDHTTPMON_HH */

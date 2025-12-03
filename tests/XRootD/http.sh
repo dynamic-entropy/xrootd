@@ -396,5 +396,5 @@ function test_http() {
   # Uncomment sleep to test monitoring packets - to keep the server running beyond monitoring flush intervals
   # For HTTP Summary monitoring in another terminal use: socat -u udp-recv:9999 -
   # For HTTP GStream monitoring use: socat -u udp-recv:8888 -
-  # sleep 5
+  sleep 5
 }
