@@ -46,6 +46,7 @@
 #include "XrdOuc/XrdOucUtils.hh"
 #include "XrdOuc/XrdOucPrivateUtils.hh"
 #include "XrdHttpCors/XrdHttpCors.hh"
+#include "XrdHttpMon.hh"
 
 #include <charconv>
 #include <openssl/err.h>
@@ -1612,35 +1613,43 @@ void XrdHttpProtocol::Record() {
 
   std::chrono::steady_clock::duration duration{};
   if (XrdHttpMon::hasGStream) {
-    duration = std::chrono::steady_clock::now() - CurrentReq.startTime;
+    if (CurrentReq.monStateHandle) {
+      duration = std::chrono::steady_clock::now() - CurrentReq.monStateHandle->startTime;
+    } else {
+      duration = std::chrono::steady_clock::duration::zero();
+    }
   }
 
-  switch (CurrentReq.monState) {
-    case XrdHttpReq::MonitState::NEW:
+  if (!CurrentReq.monStateHandle) {
+    CurrentReq.monStateHandle = new XrdHttpMonState();
+  }
+  
+  switch (CurrentReq.monStateHandle->state) {
+    case XrdHttpMonReqState::NEW:
       XrdHttpMon::RecordGStreamCount(CurrentReq.request, statusCode);
       XrdHttpMon::RecordMonRollVerb(CurrentReq.request);
-      CurrentReq.monState = XrdHttpReq::MonitState::ACTIVE;
+      CurrentReq.monStateHandle->state = XrdHttpMonReqState::ACTIVE;
       return;
 
-    case XrdHttpReq::MonitState::ACTIVE:
+    case XrdHttpMonReqState::ACTIVE:
       XrdHttpMon::RecordGStreamSuccess(CurrentReq.request, statusCode, duration);
       XrdHttpMon::RecordMonRollStatus(statusCode);
-      CurrentReq.monState = XrdHttpReq::MonitState::DONE;
+      CurrentReq.monStateHandle->state = XrdHttpMonReqState::DONE;
       return;
 
-    case XrdHttpReq::MonitState::ERR_NET:
+    case XrdHttpMonReqState::ERR_NET:
       XrdHttpMon::RecordGStreamErrNet(CurrentReq.request, statusCode, duration);
       XrdHttpMon::RecordMonRollStatus(statusCode);
-      CurrentReq.monState = XrdHttpReq::MonitState::DONE;
+      CurrentReq.monStateHandle->state = XrdHttpMonReqState::DONE;
       return;
 
-    case XrdHttpReq::MonitState::ERR_PROT:
+    case XrdHttpMonReqState::ERR_PROT:
       XrdHttpMon::RecordGStreamErrProt(CurrentReq.request, statusCode, duration);
       XrdHttpMon::RecordMonRollStatus(statusCode);
-      CurrentReq.monState = XrdHttpReq::MonitState::DONE;
+      CurrentReq.monStateHandle->state = XrdHttpMonReqState::DONE;
       return;
 
-    case XrdHttpReq::MonitState::DONE:
+    case XrdHttpMonReqState::DONE:
       eDest.Emsg("Record", "ERROR: Record called after state was set to DONE");
       return;
   }
@@ -1662,12 +1671,18 @@ int XrdHttpProtocol::SendData(const char *body, int bodylen) {
       r = SSL_write(ssl, body, bodylen);
       if (r <= 0) {
         ERR_print_errors(sslbio_err);
-        CurrentReq.monState = XrdHttpReq::MonitState::ERR_NET;
+        if (!CurrentReq.monStateHandle) {
+          CurrentReq.monStateHandle = new XrdHttpMonState();
+        }
+        CurrentReq.monStateHandle->state = XrdHttpMonReqState::ERR_NET;
       }
     } else {
       r = Link->Send(body, bodylen);
       if (r <= 0) {
-        CurrentReq.monState = XrdHttpReq::MonitState::ERR_NET;
+        if (!CurrentReq.monStateHandle) {
+          CurrentReq.monStateHandle = new XrdHttpMonState();
+        }
+        CurrentReq.monStateHandle->state = XrdHttpMonReqState::ERR_NET;
       }
     }
   }
@@ -1776,8 +1791,8 @@ int XrdHttpProtocol::ChunkResp(const char *body, long long bodylen) {
   if (content_length == 0 || bodylen == -1) { //final chunk
     // If for some reason we encounter issues with both network and the filesystem
     // we report it as a network error
-    if (CurrentReq.xrdresp == kXR_error && CurrentReq.monState == XrdHttpReq::MonitState::ACTIVE)
-      CurrentReq.monState = XrdHttpReq::MonitState::ERR_PROT;
+    if (CurrentReq.xrdresp == kXR_error && CurrentReq.monStateHandle && CurrentReq.monStateHandle->state == XrdHttpMonReqState::ACTIVE)
+      CurrentReq.monStateHandle->state = XrdHttpMonReqState::ERR_PROT;
     Record();
   }
 

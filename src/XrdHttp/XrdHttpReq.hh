@@ -62,6 +62,8 @@ struct DirListInfo {
 class XrdHttpProtocol;
 class XrdOucEnv;
 
+struct XrdHttpMonState;
+
 class XrdHttpReq : public XrdXrootd::Bridge::Result {
 
 public:
@@ -199,6 +201,7 @@ public:
     fopened = false;
     headerok = false;
     mScitag = -1;
+    monStateHandle = nullptr;
   };
 
   virtual ~XrdHttpReq();
@@ -348,8 +351,6 @@ public:
 
   std::string m_origin;
 
-  std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::time_point::min();
-
   /// Repr-Digest map where the key is the digest name and the value is the base64 encoded digest value
   std::map<std::string,std::string> m_repr_digest;
 
@@ -357,14 +358,8 @@ public:
   /// the preference (between 0 and 9)
   std::map<std::string,uint8_t> m_want_repr_digest;
 
-  enum MonitState {
-    NEW,       // Uninitialised state
-    ACTIVE,    // First Call to Process Request
-    ERR_NET,   // Network Error
-    ERR_PROT,  // Filesystem/XRootD error that did not result in a valid HTTP response
-               // We see this only during a chunked response
-    DONE       // Final state 
-  } monState;
+  // Pointer to monitoring state
+  XrdHttpMonState *monStateHandle;
 
   /// Crunch an http request.
   /// Return values:

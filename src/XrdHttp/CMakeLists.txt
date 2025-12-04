@@ -5,11 +5,18 @@ endif()
 # Note that XrdHttpUtils is marked as a shared library as XrdHttp plugins
 # are expected to link against it for the XrdHttpExt class implementations.
 
+add_library(XrdHttpMon SHARED
+  XrdHttpMon.cc
+  XrdHttpMon.hh
+)
+
+set_target_properties(XrdHttpMon
+  PROPERTIES VERSION 1.0.0 SOVERSION 1)
+
 add_library(XrdHttpUtils SHARED
   XrdHttpChecksum.cc         XrdHttpChecksum.hh
   XrdHttpChecksumHandler.cc  XrdHttpChecksumHandler.hh
   XrdHttpExtHandler.cc       XrdHttpExtHandler.hh
-  XrdHttpMon.cc              XrdHttpMon.hh
   XrdHttpProtocol.cc         XrdHttpProtocol.hh
   XrdHttpReadRangeHandler.cc XrdHttpReadRangeHandler.hh
   XrdHttpReq.cc              XrdHttpReq.hh
@@ -30,6 +37,7 @@ target_link_libraries(XrdHttpUtils
     XrdServer
     XrdUtils
     XrdCrypto
+    XrdHttpMon
   PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -44,6 +52,7 @@ install(
   TARGETS
     ${XrdHttp}
     XrdHttpUtils
+    XrdHttpMon
   LIBRARY
     DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )

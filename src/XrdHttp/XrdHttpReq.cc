@@ -61,6 +61,7 @@
 #include "XrdHttp/XrdHttpHeaderUtils.hh"
 
 #include "XrdHttpUtils.hh"
+#include "XrdHttpMon.hh"
 
 #include "XrdHttpStatic.hh"
 
@@ -111,6 +112,12 @@ int XrdHttpReq::parseBody(char *body, long long len) {
 
 XrdHttpReq::~XrdHttpReq() {
   //if (xmlbody) xmlFreeDoc(xmlbody);
+
+  // Clean up monitoring state handle
+  if (monStateHandle) {
+    delete monStateHandle;
+    monStateHandle = nullptr;
+  }
 
   reset();
 }
@@ -878,7 +885,13 @@ int XrdHttpReq::prepareChecksumQuery(XrdHttpChecksumHandler::XrdHttpChecksumRawP
 int XrdHttpReq::ProcessHTTPReq() {
 
   kXR_int32 l;
-  if (startTime == std::chrono::steady_clock::time_point::min()) startTime = std::chrono::steady_clock::now();
+
+  if (!monStateHandle) {
+    monStateHandle = new XrdHttpMonState();
+  }
+  if (monStateHandle->startTime == std::chrono::steady_clock::time_point::min()) {
+    monStateHandle->startTime = std::chrono::steady_clock::now();
+  }
 
   // State variable for tracking the query parameter search
   // - 0: Indicates we've not yet searched the URL for '?'
@@ -2807,8 +2820,11 @@ void XrdHttpReq::reset() {
   m_repr_digest.clear();
   m_want_repr_digest.clear();
 
-  monState = XrdHttpReq::MonitState::NEW;
-  startTime = std::chrono::steady_clock::time_point::min();
+  // Reset monitoring state
+  if (monStateHandle) {
+    monStateHandle->state = XrdHttpMonReqState::NEW;
+    monStateHandle->startTime = std::chrono::steady_clock::time_point::min();
+  }
 }
 
 void XrdHttpReq::getfhandle() {
