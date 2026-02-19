@@ -532,7 +532,7 @@ int TPCHandler::GetRemoteFileInfoTPCPull(CURL *curl, XrdHttpExtReq &req, uint64_
     State state(curl,req.tpcForwardCreds);
     //Don't forget to copy the headers of the client's request before doing the HEAD call. Otherwise, if there is a need for authentication,
     //it will fail
-    state.SetupHeadersForHEAD(req);
+    state.CopyHeaders(req);
     int result;
     //In case we cannot get the file HEAD request, we return the error to the client
     if ((result = PerformHEADRequest(curl, req, state, success, rec)) || !success) {
@@ -916,7 +916,7 @@ int TPCHandler::ProcessPushReq(const std::string & resource, XrdHttpExtReq &req)
 
     Stream stream(std::move(fh), 0, 0, m_log);
     State state(0, stream, curl, true, req.tpcForwardCreds);
-    state.SetupHeaders(req);
+    state.CopyHeaders(req);
 
     return RunCurlWithUpdates(curl, req, state, rec);
 }
@@ -1071,7 +1071,7 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
     }
     Stream stream(std::move(fh), streams * m_pipelining_multiplier, streams > 1 ? m_block_size : m_small_block_size, m_log);
     State state(0, stream, curl, false, req.tpcForwardCreds);
-    state.SetupHeaders(req);
+    state.CopyHeaders(req);
     state.SetContentLength(sourceFileContentLength);
 
     if (streams > 1) {
