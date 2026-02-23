@@ -1,4 +1,5 @@
-SERVER_URL  = 'root://localhost/'
+import os
+SERVER_URL  = os.environ.get('XROOTD_URL', 'root://localhost/')
 smallfile   = SERVER_URL + '/tmp/spam'
 smallcopy   = SERVER_URL + '/tmp/eggs'
 smallbuffer = 'gre\0en\neggs\nand\nham\n'
