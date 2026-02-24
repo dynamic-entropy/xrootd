@@ -9,7 +9,7 @@ set -e
 : ${CURL:=$(command -v curl)}
 
 # Parallel arrays for compatibility with Bash < 4
-host_names=(metaman man1 man2 srv1 srv2 srv3 srv6)
+host_names=(metaman man1 man2 srv1 srv2 srv3 srv4)
 host_ports=(10970 10971 10972 10973 10974 10975 10976)
 host_roots=()
 host_https=()
@@ -46,6 +46,18 @@ get_http_url_for_host() {
     fi
 }
 
+get_root_url_for_host() {
+    local host="$1"
+    local idx
+    idx=$(get_index_for_host "$host")
+    if [[ "$idx" -ge 0 ]]; then
+        echo "${host_roots[idx]}"
+    else
+        echo "Unknown host: $host" >&2
+        exit 1
+    fi
+}
+
 # ------------------------------------------------------------------------------
 # Helper Functions
 # ------------------------------------------------------------------------------
@@ -61,7 +73,7 @@ check_required_commands() {
 
 # shellcheck disable=SC2329
 cleanup() {
-    echo "Error occurred. Cleaning up..."
+    echo "Cleaning up..."
 }
 trap "cleanup; exit 1" ABRT
 
@@ -143,6 +155,10 @@ perform_rename() {
 
 check_required_commands "$ADLER32" "$CRC32C" "$XRDCP" "$XRDFS" "$OPENSSL" "$CURL"
 
+# The copy of cgi parameters to destination ensure that the move suceeds
+src_hosts=(metaman man1 srv1)
+src_codes=(501 201 201)
+
 RMTDATADIR="/srvdata"
 LCLDATADIR="${PWD}/localdata"
 mkdir -p "$LCLDATADIR" "$PWD/generated_tokens"
@@ -157,9 +173,6 @@ export BEARER_TOKEN
 testfile="${LCLDATADIR}/randomfile.ref"
 ${OPENSSL} rand -out "$testfile" $((1024 * (RANDOM + 1)))
 
-# The copy of cgi parameters to destination ensure that the move suceeds
-src_hosts=(metaman man1 srv1)
-src_codes=(501 201 201)
 
 for ((i = 0; i < ${#src_hosts[@]}; i++)); do
     src="${src_hosts[i]}"
@@ -171,6 +184,139 @@ for ((i = 0; i < ${#src_hosts[@]}; i++)); do
     code="${src_codes[i]}"
     perform_rename "$src" "old_$src" "new_$src" "$code"
 done
+
+#
+# ------------------------------------------------------------------------------
+# OpenVerify plugin integration tests (cache)
+# ------------------------------------------------------------------------------
+#
+# The OpenVerify plugin runs on the server side after cmsd selection (i.e., after
+# the underlying ofs returns SFS_REDIRECT). We validate that:
+# - First access causes a cache miss and triggers open_verify + cache insert.
+# - Second access (with opposite time parity) uses cached result instead of
+#   re-running open_verify.
+#
+
+
+echo -e "\n[OpenVerifyCache] Starting cache integration test \n"
+
+assert_log_contains() {
+    local logfile="$1"
+    local needle="$2"
+    local deadline=$((SECONDS + 10))
+    while [[ $SECONDS -lt $deadline ]]; do
+        if grep -F -q "$needle" "$logfile"; then
+            return 0
+        fi
+        sleep 0.2
+    done
+
+    echo "Expected log to contain: $needle"
+    echo "---- $logfile (tail) ----"
+    tail -n 200 "$logfile" || true
+    echo "-------------------------"
+    exit 1
+}
+
+META_LOG="metaman/xrootd.log"
+if [[ ! -f "$META_LOG" ]]; then
+    echo "Expected metaman log at '$META_LOG' but file does not exist"
+    exit 1
+fi
+
+# Ensure there's a dedicated object for the HTTP OpenVerify test.
+upload_file_to_host "srv1" "openverify_http_srv1" "$testfile"
+
+# Use a file that lives on a data server, accessed via the meta manager.
+META_ROOT="root://localhost:10970"
+REMOTE_PATH="/srvdata/new_srv1"
+REMOTE_URL="${META_ROOT}//${REMOTE_PATH#/}"
+
+tmp_out="${LCLDATADIR}/openverify_cache_read.out"
+
+echo -e "\n[OpenVerifyCache] Cache integration test"
+# truncate -s 0 "$META_LOG"
+${XRDCP} -f "$REMOTE_URL" "$tmp_out"
+assert_log_contains "$META_LOG" "openverify cache miss for"
+
+# Extract the cache key we observed in the log; it should be the last token.
+cache_key=$(grep -F "openverify cache miss for" "$META_LOG" | head -n 1 | awk '{print $NF}')
+if [[ -z "$cache_key" ]]; then
+    echo "Failed to extract cache key from log."
+    echo "---- $META_LOG (tail) ----"
+    tail -n 200 "$META_LOG" || true
+    echo "--------------------------"
+    exit 1
+fi
+
+expected_cached=""
+if grep -F -q "openverify succeeded for $cache_key" "$META_LOG"; then
+    expected_cached="openverify succeeded (cached) for $cache_key"
+elif grep -F -q "openverify failed for $cache_key" "$META_LOG"; then
+    expected_cached="openverify failed (cached) for $cache_key"
+else
+    echo "Did not find openverify result line in log after miss."
+    echo "---- $META_LOG (tail) ----"
+    tail -n 200 "$META_LOG" || true
+    echo "--------------------------"
+    exit 1
+fi
+
+${XRDCP} -f "$REMOTE_URL" "$tmp_out"
+assert_log_contains "$META_LOG" "$expected_cached"
+
+miss_count=$(grep -F -c "openverify cache miss for $cache_key" "$META_LOG" || true)
+if [[ "$miss_count" -ne 1 ]]; then
+    echo "Expected exactly one cache-miss log line; got $miss_count"
+    echo "---- $META_LOG (tail) ----"
+    tail -n 200 "$META_LOG" || true
+    echo "--------------------------"
+    exit 1
+fi
+
+echo -e "\n[OpenVerifyCache][HTTP] Cache integration test"
+# truncate -s 0 "$META_LOG"
+
+META_HTTP="$(get_http_url_for_host metaman)"
+REMOTE_HTTP_PATH="/srvdata/openverify_http_srv1"
+REMOTE_HTTP_URL="${META_HTTP}${REMOTE_HTTP_PATH}"
+
+${CURL} -L --location-trusted -v -s -f -H "Authorization: Bearer ${BEARER_TOKEN}" "$REMOTE_HTTP_URL" -o "$tmp_out"
+assert_log_contains "$META_LOG" "openverify cache miss for"
+
+cache_key_http=$(grep -F "openverify cache miss for" "$META_LOG" | head -n 1 | awk '{print $NF}')
+if [[ -z "$cache_key_http" ]]; then
+    echo "Failed to extract HTTP cache key from log."
+    echo "---- $META_LOG (tail) ----"
+    tail -n 200 "$META_LOG" || true
+    echo "--------------------------"
+    exit 1
+fi
+
+expected_cached_http=""
+if grep -F -q "openverify succeeded for $cache_key_http" "$META_LOG"; then
+    expected_cached_http="openverify succeeded (cached) for $cache_key_http"
+elif grep -F -q "openverify failed for $cache_key_http" "$META_LOG"; then
+    expected_cached_http="openverify failed (cached) for $cache_key_http"
+else
+    echo "Did not find openverify result line in log after HTTP miss."
+    echo "---- $META_LOG (tail) ----"
+    tail -n 200 "$META_LOG" || true
+    echo "--------------------------"
+    exit 1
+fi
+
+${CURL} -L --location-trusted -v -s -f -H "Authorization: Bearer ${BEARER_TOKEN}" "$REMOTE_HTTP_URL" -o "$tmp_out"
+assert_log_contains "$META_LOG" "$expected_cached_http"
+
+miss_count_http=$(grep -F -c "openverify cache miss for $cache_key_http" "$META_LOG" || true)
+if [[ "$miss_count_http" -ne 1 ]]; then
+    echo "Expected exactly one HTTP cache-miss log line; got $miss_count_http"
+    echo "---- $META_LOG (tail) ----"
+    tail -n 200 "$META_LOG" || true
+    echo "--------------------------"
+    exit 1
+fi
 
 echo -e "\nALL TESTS PASSED"
 exit 0
