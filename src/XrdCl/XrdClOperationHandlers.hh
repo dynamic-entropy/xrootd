@@ -196,7 +196,9 @@ namespace XrdCl
         std::unique_ptr<AnyObject> delrsp( response );
         std::unique_ptr<HostList> delhl( hostList );
         Response *res = GetResponse<Response>( status, response );
-        fun( *status, *res, *hostList );
+        HostList emptyList;
+        HostList &hostListRef = hostList ? *hostList : emptyList;
+        fun( *status, *res, hostListRef );
       }
 
     private:
@@ -246,7 +248,9 @@ namespace XrdCl
         std::unique_ptr<XRootDStatus> delst( status );
         std::unique_ptr<AnyObject> delrsp( response );
         std::unique_ptr<HostList> delhl( hostList );
-        fun( *status, *hostList );
+        HostList emptyList;
+        HostList &hostListRef = hostList ? *hostList : emptyList;
+        fun( *status, hostListRef );
       }
 
     private:
@@ -383,7 +387,9 @@ namespace XrdCl
         }
         else
           info = &NullRef<StatInfo>::value;
-        fun( *status, *info, *hostList );
+        HostList emptyList;
+        HostList &hostListRef = hostList ? *hostList : emptyList;
+        fun( *status, *info, hostListRef );
       }
 
     private:
