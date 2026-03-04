@@ -32,6 +32,7 @@
 #include "XrdXrootd/XrdXrootdGStream.hh"
 #include "XrdVersion.hh"
 
+#include <curl/curl.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -192,6 +193,14 @@ Factory::Initialize()
 
         // Start up the cache for the OPTIONS response
         auto &cache = XrdClHttp::VerbsCache::Instance();
+
+        // Initialize curl (and thus OpenSSL) on this thread before starting workers.
+        // Otherwise the first curl_multi_init() in a worker can trigger OpenSSL init
+        // in that thread and crash (e.g. SEGV in pthread_rwlock_wrlock).
+        if (curl_global_init(CURL_GLOBAL_DEFAULT) != 0) {
+            m_log->Error(kLogXrdClHttp, "curl_global_init failed");
+            return;
+        }
 
         // Startup curl workers after we've set the configs to avoid race conditions
         for (unsigned idx=0; idx<m_poll_threads; idx++) {
