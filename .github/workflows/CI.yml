@@ -37,6 +37,7 @@ jobs:
       run: |
         apk add \
           bash \
+          gdb \
           cmake \
           ceph-dev \
           curl \
@@ -76,7 +77,17 @@ jobs:
       run: adduser -D --uid 1001 runner && chown -R runner:runner ${GITHUB_WORKSPACE}
 
     - name: Build and Test with CTest
-      run: sudo -E -u runner ctest -VV -S test.cmake
+      run: |
+        echo core.%e.%p.%t > /proc/sys/kernel/core_pattern || true
+        sudo -E -u runner sh -c 'ulimit -c unlimited || true; ctest -VV -S test.cmake'
+
+    - name: Upload core dumps
+      if: failure()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-dumps-alpine
+        path: '**/core*'
 
     - name: Install with CMake
       run: cmake --install build
@@ -97,7 +108,7 @@ jobs:
     steps:
     - name: Install dependencies
       run: |
-        dnf install -y dnf-plugins-core epel-release git rpmdevtools sudo
+        dnf install -y dnf-plugins-core epel-release gdb git rpmdevtools sudo
         dnf install -y epel-rpm-macros
         dnf config-manager --set-enabled powertools
 
@@ -113,7 +124,17 @@ jobs:
       run: dnf builddep -y xrootd.spec
 
     - name: Build and Test with CTest
-      run: sudo -E -u runner ctest -VV -S test.cmake
+      run: |
+        echo core.%e.%p.%t > /proc/sys/kernel/core_pattern || true
+        sudo -E -u runner sh -c 'ulimit -c unlimited || true; ctest -VV -S test.cmake'
+
+    - name: Upload core dumps
+      if: failure()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-dumps-alma8
+        path: '**/core*'
 
     - name: Install with CMake
       run: cmake --install build
@@ -134,7 +155,7 @@ jobs:
     steps:
     - name: Install dependencies
       run: |
-        dnf install -y dnf-plugins-core epel-release git rpmdevtools sudo
+        dnf install -y dnf-plugins-core epel-release gdb git rpmdevtools sudo
         dnf config-manager --set-enabled crb
 
     - name: Clone repository
@@ -149,7 +170,17 @@ jobs:
       run: dnf builddep -y xrootd.spec
 
     - name: Build and Test with CTest
-      run: sudo -E -u runner ctest -VV -S test.cmake
+      run: |
+        echo core.%e.%p.%t > /proc/sys/kernel/core_pattern || true
+        sudo -E -u runner sh -c 'ulimit -c unlimited || true; ctest -VV -S test.cmake'
+
+    - name: Upload core dumps
+      if: failure()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-dumps-alma9
+        path: '**/core*'
 
     - name: Install with CMake
       run: cmake --install build
@@ -170,7 +201,7 @@ jobs:
     steps:
     - name: Install dependencies
       run: |
-        dnf install -y dnf-plugins-core epel-release git rpmdevtools sudo
+        dnf install -y dnf-plugins-core epel-release gdb git rpmdevtools sudo
         dnf config-manager --set-enabled crb
 
     - name: Clone repository
@@ -185,7 +216,17 @@ jobs:
       run: dnf builddep -y xrootd.spec
 
     - name: Build and Test with CTest
-      run: sudo -E -u runner ctest -VV -S test.cmake
+      run: |
+        echo core.%e.%p.%t > /proc/sys/kernel/core_pattern || true
+        sudo -E -u runner sh -c 'ulimit -c unlimited || true; ctest -VV -S test.cmake'
+
+    - name: Upload core dumps
+      if: failure()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-dumps-alma10
+        path: '**/core*'
 
     - name: Install with CMake
       run: cmake --install build
@@ -214,7 +255,7 @@ jobs:
 
     steps:
     - name: Install dependencies
-      run: dnf install -y dnf-plugins-core git ninja-build rpmdevtools ${{ matrix.compiler }}
+      run: dnf install -y dnf-plugins-core gdb git ninja-build rpmdevtools ${{ matrix.compiler }}
 
     - name: Clone repository
       uses: actions/checkout@v4
@@ -228,7 +269,17 @@ jobs:
       run: dnf builddep -y --define 'with_ceph 1' xrootd.spec
 
     - name: Build and Test with CTest
-      run: sudo -E -u runner env CC=${CC} CXX=${CC/g*/g++} ctest -VV -S test.cmake
+      run: |
+        echo core.%e.%p.%t > /proc/sys/kernel/core_pattern || true
+        sudo -E -u runner bash -c 'ulimit -c unlimited || true; env CC=${CC} CXX=${CC/g*/g++} ctest -VV -S test.cmake'
+
+    - name: Upload core dumps
+      if: failure()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-dumps-fedora-${{ matrix.compiler }}-${{ matrix.config }}
+        path: '**/core*'
 
     - name: Install with CMake
       run: cmake --install build
@@ -260,7 +311,7 @@ jobs:
     - name: Install development tools
       run: |
         sudo apt update -qq
-        sudo apt install -y build-essential devscripts equivs git
+        sudo apt install -y build-essential devscripts equivs gdb git
 
     - name: Clone repository
       uses: actions/checkout@v4
@@ -271,7 +322,17 @@ jobs:
       run: mk-build-deps --install --remove -s sudo debian/control <<< yes
 
     - name: Build and Test with CTest
-      run: env CC=${CC} CXX=${CC/g*/g++} ctest -VV -S test.cmake
+      run: |
+        if [[ "$(uname -s)" == "Linux" ]]; then sudo sh -c 'echo core.%e.%p.%t > /proc/sys/kernel/core_pattern' || true; fi
+        bash -c 'ulimit -c unlimited || true; env CC=${CC} CXX=${CC/g*/g++} ctest -VV -S test.cmake'
+
+    - name: Upload core dumps
+      if: failure()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-dumps-ubuntu-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.config }}
+        path: '**/core*'
 
     - name: Install with CMake
       run: sudo cmake --install build
@@ -310,7 +371,19 @@ jobs:
         fetch-depth: 0
 
     - name: Build and Test with CTest
-      run: ctest -VV -S test.cmake
+      run: |
+        if [[ "$(uname -s)" == "Linux" ]]; then sudo sh -c 'echo core.%e.%p.%t > /proc/sys/kernel/core_pattern' || true; fi
+        sh -c 'ulimit -c unlimited || true; ctest -VV -S test.cmake'
+
+    - name: Upload core dumps
+      if: failure()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-dumps-macos
+        path: |
+          **/core*
+          /cores/core.*
 
     - name: Install with CMake
       run: sudo cmake --install build
