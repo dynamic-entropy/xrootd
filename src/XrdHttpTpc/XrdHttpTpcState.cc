@@ -32,7 +32,7 @@ void State::Move(State &other)
     m_push = other.m_push;
     m_recv_status_line = other.m_recv_status_line;
     m_recv_all_headers = other.m_recv_all_headers;
-    m_offset = other.m_offset;
+    m_offset = static_cast<off_t>(other.m_offset);
     m_start_offset = other.m_start_offset;
     m_status_code = other.m_status_code;
     m_content_length = other.m_content_length;
@@ -395,8 +395,20 @@ bool State::Finalize()
     return true;
 }
 
+void State::SetConnectionDescription(const std::string &desc)
+{
+    std::lock_guard<std::mutex> lock(m_conn_mutex);
+    m_conn_desc = desc;
+}
+
 std::string State::GetConnectionDescription()
 {
+    {
+        std::lock_guard<std::mutex> lock(m_conn_mutex);
+        if (!m_conn_desc.empty()) {
+            return m_conn_desc;
+        }
+    }
     // CURLINFO_PRIMARY_PORT is only defined for 7.21.0 or later; on older
     // library versions, simply omit this information.
 #if LIBCURL_VERSION_NUM >= 0x071500
