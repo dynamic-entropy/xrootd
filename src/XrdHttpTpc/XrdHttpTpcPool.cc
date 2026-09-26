@@ -19,13 +19,10 @@ decltype(TPCRequestManager::m_init_once) TPCRequestManager::m_init_once;
 decltype(TPCRequestManager::m_mutex) TPCRequestManager::m_mutex;
 decltype(TPCRequestManager::m_idle_timeout) TPCRequestManager::m_idle_timeout = std::chrono::minutes(1);
 unsigned TPCRequestManager::m_max_pending_ops = 20;  // default max_pending_transfers_per_queue
-unsigned TPCRequestManager::m_max_workers = 50;      // default mac_active_transfers_per_queue
+unsigned TPCRequestManager::m_max_workers = 20;
 
-TPCRequestManager::TPCQueue::TPCWorker::TPCWorker(const std::string &label, int scitag, TPCQueue &queue)
-    : m_label(label),
-      m_queue(queue),
-      m_pmark_handle((XrdNetPMark *)queue.m_parent.m_xrdEnv.GetPtr("XrdNetPMark*")),
-      m_pmark_manager(m_pmark_handle, scitag, TPC::TpcType::Pull) {}
+TPCRequestManager::TPCQueue::TPCWorker::TPCWorker(const std::string &label, TPCQueue &queue)
+    : m_label(label), m_queue(queue) {}
 
 void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(TPCWorker *myself) { myself->Run(); }
 
@@ -156,15 +153,7 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
  *       It has been kept in case we will need this callback in the future.
  */
 
-int TPCRequestManager::TPCQueue::TPCWorker::sockopt_callback(void *clientp, curl_socket_t curlfd, curlsocktype purpose) {
-    TPCWorker *tpcWorker = (TPCWorker *)clientp;
-
-    if (purpose == CURLSOCKTYPE_IPCXN && tpcWorker && tpcWorker->m_pmark_manager.isEnabled()) {
-        // We will not reach this callback if the corresponding socket could not
-        // have been connected the socket is already connected only if the
-        // packet marking is enabled
-        return CURL_SOCKOPT_ALREADY_CONNECTED;
-    }
+int TPCRequestManager::TPCQueue::TPCWorker::sockopt_callback(void * /*clientp*/, curl_socket_t /*curlfd*/, curlsocktype /*purpose*/) {
     return CURL_SOCKOPT_OK;
 }
 
@@ -176,28 +165,13 @@ int TPCRequestManager::TPCQueue::TPCWorker::sockopt_callback(void *clientp, curl
  * opened so we can capture the protocol that will be used.
  */
 
-int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(void *clientp, curlsocktype purpose, struct curl_sockaddr *address) {
-    // Return a socket file descriptor (note the clo_exec flag will be set).
-    int fd = XrdSysFD_Socket(address->family, address->socktype, address->protocol);
-    // See what kind of address will be used to connect
-    if (fd < 0) {
+int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(void * /*clientp*/, curlsocktype purpose, struct curl_sockaddr *address) {
+    if (purpose != CURLSOCKTYPE_IPCXN || !address) {
         return CURL_SOCKET_BAD;
     }
-    TPCWorker *tpcWorker = (TPCWorker *)clientp;
-
-    if (purpose == CURLSOCKTYPE_IPCXN && clientp) {
-        XrdNetAddr thePeer(&(address->addr));
-        //   rec->isIPv6 =  (thePeer.isIPType(XrdNetAddrInfo::IPv6)
-        //                   && !thePeer.isMapped());
-        std::stringstream connectErrMsg;
-
-        if (!tpcWorker->m_pmark_manager.connect(fd, &(address->addr), address->addrlen, CONNECT_TIMEOUT, connectErrMsg)) {
-            tpcWorker->m_queue.m_parent.m_log.Emsg("TPCWorker:", "Unable to connect socket:", connectErrMsg.str().c_str());
-            return CURL_SOCKET_BAD;
-        }
-
-        tpcWorker->m_pmark_manager.startTransfer();
-        tpcWorker->m_pmark_manager.beginPMarks();
+    int fd = XrdSysFD_Socket(address->family, address->socktype, address->protocol);
+    if (fd < 0) {
+        return CURL_SOCKET_BAD;
     }
     return fd;
 }
@@ -211,10 +185,7 @@ int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(void *clientp, c
  *
  */
 
-int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(void *clientp, curl_socket_t fd) {
-    TPCWorker *tpcWorker = (TPCWorker *)clientp;
-
-    tpcWorker->m_pmark_manager.endPmark(fd);
+int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(void * /*clientp*/, curl_socket_t fd) {
     return close(fd);
 }
 
@@ -271,7 +242,7 @@ bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
     }
 
     if (m_workers.size() < m_max_workers) {
-        auto worker = std::make_unique<TPCRequestManager::TPCQueue::TPCWorker>(handler.GetLabel(), handler.GetScitag(), *this);
+        auto worker = std::make_unique<TPCRequestManager::TPCQueue::TPCWorker>(handler.GetLabel(), *this);
         std::thread t(TPCRequestManager::TPCQueue::TPCWorker::RunStatic, worker.get());
         t.detach();
         m_workers.push_back(std::move(worker));
@@ -319,25 +290,9 @@ void TPCRequestManager::TPCRequest::Cancel() { m_active.store(false, std::memory
 
 CURL *TPCRequestManager::TPCRequest::GetHandle() const { return m_curl; }
 
-int TPCRequestManager::TPCRequest::GetScitag() const { return m_scitag; }
-
 bool TPCRequestManager::TPCRequest::IsActive() const { return m_active.load(std::memory_order_relaxed); }
 
 std::string TPCRequestManager::TPCRequest::GetLabel() const { return m_label; }
-
-std::string TPCRequestManager::TPCRequest::GenerateIdentifier(const std::string& label, const char *vorg, const int scitag) {
-    std::stringstream ss;
-    ss << label;  // always present
-
-    if (vorg && *vorg) {
-        ss << "_" << vorg;
-    }
-
-    if (scitag != -1) {
-        ss << "_" << scitag;
-    }
-    return ss.str();
-}
 
 // Logic from State::GetConnectionDescription
 void TPCRequestManager::TPCRequest::UpdateRemoteConnDesc() {

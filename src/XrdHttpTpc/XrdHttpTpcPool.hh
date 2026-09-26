@@ -15,43 +15,35 @@
 #include <unordered_map>
 #include <vector>
 
-#include "XrdHttpTpcPMarkManager.hh"
-
 // Forward dec'ls
 class XrdOucEnv;
 class XrdSysError;
 
 // A pool manager for TPC requests
 //
-// The manager maintains a set of worker pools, one for each distinct identifier
-// (typically, one per organization; this prevents the mixing of transfers from
-// different organizations on the same TCP socket).  Each TPC transfer submitted
-// must have an identifier; the transfer is then queued for the appropriate pool
-// and subsequently executed by one of the worker threads.
+// The manager keeps one worker pool, selected by an opaque label supplied with
+// each transfer.  The label is not interpreted here, so the policy for how
+// transfers share a pool can change without changing the pool itself.
 //
-// Transfers are packed to as few workers as possible in an attempt to reduce
-// the number of TCP connections; however, if the transfer is not picked up
-// quickly, a new worker will be spawned.  Idle workers will auto-shutdown; if
-// not used, the pool will have no running threads.
+// Transfers are packed onto as few workers as possible so libcurl can reuse TCP
+// connections.  Idle workers shut down; an unused pool has no running threads.
 namespace TPC {
 
 class TPCRequestManager final {
    public:
     class TPCRequest {
        public:
-        TPCRequest(const std::string &label, const int scitag, CURL *handle) : m_label(label), m_scitag(scitag), m_curl(handle) {}
+        TPCRequest(const std::string &label, CURL *handle) : m_label(label), m_curl(handle) {}
 
         int WaitFor(std::chrono::steady_clock::duration);
         CURL *GetHandle() const;
         std::string GetLabel() const;
-        int GetScitag() const;
         std::string GetRemoteConnDesc();
         void SetActive();
         void SetDone(int status, const std::string &msg);
         bool IsActive() const;
         void Cancel();
         void UpdateRemoteConnDesc();
-        static std::string GenerateIdentifier(const std::string& label, const char *vorg, const int scitag);
 
        private:
         std::atomic<bool> m_active{false};
@@ -62,7 +54,6 @@ class TPCRequestManager final {
         // Label assigned to the request. Determines which queue it will be placed into.
         // A queue with matching identifier is created if it does not already exists.
         std::string m_label;
-        int m_scitag;
         CURL *m_curl;
         std::condition_variable m_cv;
         std::mutex m_mutex;
@@ -93,7 +84,7 @@ class TPCRequestManager final {
        private:
         class TPCWorker final {
            public:
-            TPCWorker(const std::string &label, int scitag, TPCQueue &queue);
+            TPCWorker(const std::string &label, TPCQueue &queue);
             TPCWorker(const TPCWorker &) = delete;
 
             void Run();
@@ -115,13 +106,11 @@ class TPCRequestManager final {
             // Label for this worker. Always set to the m_identifier of the queue it serves.
             const std::string m_label;
             TPCQueue &m_queue;
-            XrdNetPMark *m_pmark_handle;
-            XrdHttpTpc::PMarkManager m_pmark_manager;
         };
 
         static const long CONNECT_TIMEOUT = 60;
         bool m_done{false};
-        // Unique identifier for this queue, in the format: "tpc_<vorg>_<scitag>".
+        // Opaque label supplied with the transfer.  The pool does not interpret it.
         const std::string m_identifier;
         std::vector<std::unique_ptr<TPCWorker>> m_workers;
         std::deque<TPCRequest *> m_ops;
