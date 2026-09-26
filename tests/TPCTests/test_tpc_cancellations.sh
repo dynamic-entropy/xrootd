@@ -1,81 +1,38 @@
 #!/bin/bash
-set -x
+# Close the COPY client early and check that the destination is not a full copy.
+# The HTTP status of a finished transfer is asserted separately; the outcome of a
+# successful COPY is the last line of the chunked body (see assert_tpc_success).
 
-NUM_FILES=9
-NUM_STREAMS=3
+src_local="${LCLDATADIR}/cancel_src.ref"
+src_url="https://localhost:10951/${RMTDATADIR}/cancel_src.ref"
+dst_url="https://localhost:10952/${RMTDATADIR}/cancel_dst.ref"
+dst_disk="${PWD}/data/srv2/srvdata/tpc/cancel_dst.ref"
 
-# Clean up any old files
-for i in $(seq 1 $NUM_FILES); do
-    rm -f "${LCLDATADIR}/largefile.ref.${i}" \
-          "${LCLDATADIR}/largefile.dat.${i}" \
-          "${PWD}/data/srv1/srvdata/tpc/largefile.ref.${i}" \
-          "${PWD}/data/srv2/srvdata/tpc/largefile.ref.${i}"
-done
+rm -f "${src_local}" "${dst_disk}"
 
-# Generate, upload, and test parallel COPY with random cancellation
-for i in $(seq 1 $NUM_FILES); do
-    local_large_file="${LCLDATADIR}/largefile.ref.${i}"
-    remote_large_file="https://localhost:10951/${RMTDATADIR}/largefile.ref.${i}"
-    downloaded_large_file="${LCLDATADIR}/largefile.dat.${i}"
+# Large enough that the copy is still running when the client goes away.
+generate_file_of_size "${src_local}" $((128 * 1024 * 1024))
+upload_file "${src_local}" "${src_url}" http
 
-    generate_file "${local_large_file}" 200000000 &
-    wait
-    upload_file "${local_large_file}" "${remote_large_file}" http &
-    wait
-    download_file "${remote_large_file}" "${downloaded_large_file}" http &
-    wait
+# --max-time closes the client. curl's non-zero status is the disconnect.
+${CURL} -X COPY -L -s -o /dev/null \
+    -H "Source: ${src_url}" \
+    -H "Authorization: Bearer ${BEARER_TOKEN}" \
+    -H "TransferHeaderAuthorization: Bearer ${BEARER_TOKEN}" \
+    --cacert "${BINARY_DIR}/tests/issuer/tlsca.pem" \
+    --max-time 1 \
+    "${dst_url}" || true
 
-done
+# The server learns the client is gone at the next performance marker (5s).
+sleep 8
 
-wait
+src_size=$(stat -c %s "${src_local}")
+if [[ -f "${dst_disk}" ]]; then
+    dst_size=$(stat -c %s "${dst_disk}")
+else
+    dst_size=0
+fi
 
-for i in $(seq 1 $NUM_FILES); do
-    scitag_flow=$((65 + (RANDOM % 4)))
-    local_large_file="${LCLDATADIR}/largefile.ref.${i}"
-    remote_large_file="https://localhost:10951/${RMTDATADIR}/largefile.ref.${i}"
-    downloaded_large_file="${LCLDATADIR}/largefile.dat.${i}"
-
-    remote_large_file_srvs=(
-        "https://localhost:10951/${RMTDATADIR}/largefile.ref1.${i}"
-        "https://localhost:10952/${RMTDATADIR}/largefile.ref2.${i}"
-    )
-
-    for remote_large_file_srv in "${remote_large_file_srvs[@]}"; do
-    # Randomly cancel some requests
-        if (( NUM_FILES/3 > ( RANDOM % NUM_FILES))); then
-            ${CURL} -X COPY -L -s -v \
-                -H "Destination: ${remote_large_file_srv}" \
-                -H "Authorization: Bearer ${BEARER_TOKEN}" \
-                -H "TransferHeaderAuthorization: Bearer ${BEARER_TOKEN}" \
-                -H "Scitag: ${scitag_flow}" \
-                --cacert "${BINARY_DIR}/tests/issuer/tlsca.pem" \
-                --max-time 1 \
-                "${remote_large_file}" &
-        elif (( NUM_FILES*2/3 > (RANDOM % NUM_FILES) )); then
-            # Multstream is only implemented in pull mode
-            # No max-time (normal) 
-            ${CURL} -X COPY -L -s -v \
-                -H "Source: ${remote_large_file}" \
-                -H "Authorization: Bearer ${BEARER_TOKEN}" \
-                -H "TransferHeaderAuthorization: Bearer ${BEARER_TOKEN}" \
-                -H "Scitag: ${scitag_flow}" \
-                -H "X-Number-Of-Streams: $NUM_STREAMS" \
-                --cacert "${BINARY_DIR}/tests/issuer/tlsca.pem" \
-                "${remote_large_file_srv}" &
-        else
-            # No max-time (normal)
-            ${CURL} -X COPY -L -s -v \
-                -H "Destination: ${remote_large_file_srv}" \
-                -H "Authorization: Bearer ${BEARER_TOKEN}" \
-                -H "TransferHeaderAuthorization: Bearer ${BEARER_TOKEN}" \
-                -H "Scitag: ${scitag_flow}" \
-                --cacert "${BINARY_DIR}/tests/issuer/tlsca.pem" \
-                "${remote_large_file}" &
-        fi
-    done
-done
-
-# Wait for all background curl jobs
-wait
-
-set +x
+if [[ "${dst_size}" -eq "${src_size}" ]]; then
+    error "cancelled COPY ran to completion: destination size ${dst_size} matches the source"
+fi
