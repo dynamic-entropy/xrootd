@@ -1,10 +1,7 @@
 #include "XrdHttpTpcPool.hh"
 
-#include <fcntl.h>
-
 #include <XrdOuc/XrdOucEnv.hh>
 #include <XrdSys/XrdSysError.hh>
-#include <XrdSys/XrdSysFD.hh>
 #include <algorithm>
 #include <sstream>
 #include <string>
@@ -29,13 +26,6 @@ void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(TPCWorker *myself) { myse
 bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCRequestManager::TPCRequest &request) {
     CURLMcode mres;
     auto curl = request.GetHandle();
-
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, this);
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
-    curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, this);
-    curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
-    curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA, this);
 
     mres = curl_multi_add_handle(multi_handle, curl);
     if (mres) {
@@ -138,55 +128,6 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
     }
     curl_multi_cleanup(multi_handle);
     m_queue.Done(this);
-}
-
-/******************************************************************************/
-/*           s o c k o p t _ s e t c l o e x e c _ c a l l b a c k            */
-/******************************************************************************/
-
-/**
- * The callback that will be called by libcurl when the socket has been created
- * https://curl.se/libcurl/c/CURLOPT_SOCKOPTFUNCTION.html
- *
- * Note: that this callback has been replaced by the opensocket_callback as it
- *       was needed for monitoring to report what IP protocol was being used.
- *       It has been kept in case we will need this callback in the future.
- */
-
-int TPCRequestManager::TPCQueue::TPCWorker::sockopt_callback(void * /*clientp*/, curl_socket_t /*curlfd*/, curlsocktype /*purpose*/) {
-    return CURL_SOCKOPT_OK;
-}
-
-/******************************************************************************/
-/*                   o p e n s o c k e t _ c a l l b a c k                    */
-/******************************************************************************/
-/**
- * The callback that will be called by libcurl when the socket is about to be
- * opened so we can capture the protocol that will be used.
- */
-
-int TPCRequestManager::TPCQueue::TPCWorker::opensocket_callback(void * /*clientp*/, curlsocktype purpose, struct curl_sockaddr *address) {
-    if (purpose != CURLSOCKTYPE_IPCXN || !address) {
-        return CURL_SOCKET_BAD;
-    }
-    int fd = XrdSysFD_Socket(address->family, address->socktype, address->protocol);
-    if (fd < 0) {
-        return CURL_SOCKET_BAD;
-    }
-    return fd;
-}
-
-/******************************************************************************/
-/*                   c l o s e s o c k e t _ c a l l b a c k */
-/******************************************************************************/
-/**
- * The callback that will be called by libcurl when the socket is about to be
- * closed so we can send the done packet marking information.
- *
- */
-
-int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(void * /*clientp*/, curl_socket_t fd) {
-    return close(fd);
 }
 
 void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {

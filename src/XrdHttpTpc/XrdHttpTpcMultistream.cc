@@ -292,7 +292,15 @@ int TPCHandler::RunCurlWithStreamsImpl(XrdHttpExtReq &req, State &state,
         curl_handles.emplace_back(handles.back()->GetHandle());
     }
 
-    // Notify the packet marking manager that the transfer will start after this point
+    // The probe that fetched the content length already ran.  Sockets opened
+    // from here belong to the data transfer and can carry this request's SciTag.
+    rec.pmarkManager.startTransfer();
+    if (rec.pmarkManager.isEnabled()) {
+        for (State *handle : handles) {
+            curl_easy_setopt(handle->GetHandle(), CURLOPT_FRESH_CONNECT, 1L);
+            curl_easy_setopt(handle->GetHandle(), CURLOPT_FORBID_REUSE, 1L);
+        }
+    }
 
     // Create the multi-handle and add in the current transfer to it.
     MultiCurlHandler mch(handles, m_log);

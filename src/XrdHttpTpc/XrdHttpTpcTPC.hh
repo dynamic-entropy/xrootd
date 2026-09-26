@@ -58,6 +58,11 @@ public:
     static constexpr std::string_view OSS_TASK_OPAQUE = "oss.task=httptpc";
 private:
 
+    static int sockopt_callback(void * clientp, curl_socket_t curlfd, curlsocktype purpose);
+    static int opensocket_callback(void *clientp,
+                                   curlsocktype purpose,
+                                   struct curl_sockaddr *address);
+    static int closesocket_callback(void *clientp, curl_socket_t fd);
     static int ssl_ctx_callback(CURL *curl, void *ssl_ctx, void *clientp);
     static int verify_callback(int preverify_ok, X509_STORE_CTX* ctx);
 
