@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 
 using namespace TPC;
@@ -292,7 +293,23 @@ int TPCHandler::RunCurlWithStreamsImpl(XrdHttpExtReq &req, State &state,
         curl_handles.emplace_back(handles.back()->GetHandle());
     }
 
-    // Notify the packet marking manager that the transfer will start after this point
+    // The probe that fetched the content length already ran.  Sockets opened
+    // from here belong to the data transfer and can carry this request's SciTag.
+    // Ranges of this transfer share one SciTag, so a cached connection may be
+    // reused until the multi-handle is destroyed; the close callback emits the
+    // firefly then.
+    rec.pmarkManager.startTransfer();
+    std::vector<XrdHttpTpc::PMarkManager::CurlMarkCtx> markCtxs;
+    if (rec.pmarkManager.isEnabled()) {
+        markCtxs.resize(handles.size());
+        for (size_t idx = 0; idx < handles.size(); idx++) {
+            CURL *easy = handles[idx]->GetHandle();
+            curl_easy_setopt(easy, CURLOPT_CLOSESOCKETDATA, &rec);
+            markCtxs[idx].manager = &rec.pmarkManager;
+            markCtxs[idx].curl = easy;
+            rec.pmarkManager.armReuseMark(markCtxs[idx]);
+        }
+    }
 
     // Create the multi-handle and add in the current transfer to it.
     MultiCurlHandler mch(handles, m_log);
@@ -366,6 +383,11 @@ int TPCHandler::RunCurlWithStreamsImpl(XrdHttpExtReq &req, State &state,
             continue;
         } else if (mres != CURLM_OK) {
             break;
+        }
+        if (rec.pmarkManager.isEnabled()) {
+            for (State *handle : handles) {
+                rec.pmarkManager.markCurlHandle(handle->GetHandle());
+            }
         }
 
 

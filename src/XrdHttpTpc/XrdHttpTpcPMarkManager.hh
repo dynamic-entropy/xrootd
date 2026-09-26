@@ -27,9 +27,12 @@
 #include "XrdNet/XrdNetAddr.hh"
 #include "XrdHttp/XrdHttpExtHandler.hh"
 
+#include <curl/curl.h>
+
 #include <map>
 #include <memory>
 #include <queue>
+#include <set>
 
 namespace TPC {
   enum class TpcType;
@@ -38,11 +41,14 @@ namespace TPC {
 /**
  * This class will manage packet marking handles for TPC transfers
  *
- * Each time a socket will be opened by curl (via the opensocket_callback), the manager
- * will do the connection and register the related information to the socket.
+ * Each time a socket is opened by curl (via the opensocket_callback), the manager
+ * connects it and registers it for packet marking. A transfer that reuses a cached
+ * connection never opens a socket, so the active socket is registered the same way
+ * once libcurl reports it.
  *
  * Once the transfer will start we will start the packet marking by creating XrdNetPMark::Handle
- * objects from the socket information previously registered.
+ * objects from the socket information previously registered. Ending those handles
+ * emits the firefly and leaves the socket open for a later transfer.
  *
  * In the case of multi-stream HTTP TPC transfers, a packet marking handle will be created for each stream.
  * The first one will be created as a basic one. The other will be created using the first packet marking handle as a basis.
@@ -105,10 +111,38 @@ public:
   void beginPMarks();
 
   /**
-   * This function deletes the PMark handle associated to the fd passed in parameter
-   * Use this before closing the associated socket! Otherwise the information contained in the firefly
-   * (e.g sent bytes or received bytes) will have values equal to 0.
-   * @param fd the fd of the socket to be closed
+   * Passed to libcurl so a reused connection can be marked before the request
+   * is sent.  The pointed-to object must outlive the transfer.
+   */
+  struct CurlMarkCtx {
+    PMarkManager *manager;
+    CURL *curl;
+  };
+
+  /**
+   * Ask libcurl to call markCurlHandle() once this handle's connection is
+   * chosen, including a connection taken from the cache.
+   */
+  void armReuseMark(CurlMarkCtx &ctx);
+
+  /**
+   * Start a firefly for the socket this transfer is using, including a socket
+   * libcurl reused from its connection cache. A socket already marked for this
+   * transfer is left unchanged.
+   */
+  void markCurlHandle(CURL *curl);
+
+  /**
+   * Emit the firefly for every socket marked for this transfer. The sockets
+   * stay open.
+   */
+  void endTransferMarks();
+
+  /**
+   * This function deletes the PMark handle associated to the fd passed in parameter.
+   * The socket is not closed. Call this while the socket is still open: the firefly
+   * reads its byte counters from the socket as the handle is destroyed.
+   * @param fd the fd of the socket whose firefly should be emitted
    */
   void endPmark(int fd);
 
@@ -124,8 +158,14 @@ private:
   */
   void addFd(int fd, const struct sockaddr * sockP);
 
+  static int prereqCallback(void *clientp, char *conn_primary_ip, char *conn_local_ip,
+                            int conn_primary_port, int conn_local_port);
+
   // The queue of socket information from which we will create the packet marking handles
   std::queue<SocketInfo> mSocketInfos;
+  // File descriptors currently sitting in mSocketInfos.  A reused socket is
+  // reported on every perform, and must be queued only once.
+  std::set<int> mQueuedFds;
   // The map of socket FD and packet marking handles
   std::map<int,std::unique_ptr<XrdNetPMark::Handle>> mPmarkHandles;
   // The instance of the packet marking functionality

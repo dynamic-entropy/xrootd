@@ -94,9 +94,6 @@ class TPCRequestManager final {
             void SetIdle(bool idle) { m_idle = idle; }
             std::condition_variable m_cv;
 
-            static int closesocket_callback(void *clientp, curl_socket_t fd);
-            static int opensocket_callback(void *clientp, curlsocktype purpose, struct curl_sockaddr *address);
-            static int sockopt_callback(void *clientp, curl_socket_t curlfd, curlsocktype purpose);
             std::string getLabel() const { return m_label; }
 
            private:
@@ -108,7 +105,6 @@ class TPCRequestManager final {
             TPCQueue &m_queue;
         };
 
-        static const long CONNECT_TIMEOUT = 60;
         bool m_done{false};
         // Opaque label supplied with the transfer.  The pool does not interpret it.
         const std::string m_identifier;
