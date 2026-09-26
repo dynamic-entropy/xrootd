@@ -21,9 +21,17 @@ unsigned TPCRequestManager::m_max_workers = 20;
 TPCRequestManager::TPCQueue::TPCWorker::TPCWorker(const std::string &label, TPCQueue &queue)
     : m_label(label), m_queue(queue) {}
 
-void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(TPCWorker *myself) { myself->Run(); }
+void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(std::shared_ptr<TPCQueue> queue, TPCWorker *myself) {
+    myself->Run();
+    queue->Done(myself);
+}
 
 bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCRequestManager::TPCRequest &request) {
+    if (request.IsCancelled()) {
+        request.SetDone("Transfer cancelled");
+        return true;
+    }
+
     CURLMcode mres;
     auto curl = request.GetHandle();
 
@@ -34,28 +42,27 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCReq
               "failure="
            << curl_multi_strerror(mres);
         m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", ss.str().c_str());
-        request.SetDone(500, ss.str());
-        return false;
+        request.SetDone(ss.str());
+        return true;
     }
-    request.SetActive();
+
+    auto fail = [&](const std::string &msg, LogMask lvl) {
+        curl_multi_remove_handle(multi_handle, curl);
+        m_queue.m_parent.m_log.Log(lvl, "TPCWorker", msg.c_str());
+        request.SetDone(msg);
+    };
 
     CURLcode res = static_cast<CURLcode>(-1);
     int running_handles = 1;
     const int update_interval{1};
     time_t now = time(NULL);
-    time_t last_update = now - update_interval;  // Inorder to always fetch on first pass
+    time_t last_update = now - update_interval;
 
-    auto fail_and_exit = [&](int code, const std::string &msg) -> bool {
-        curl_multi_remove_handle(multi_handle, curl);
-        m_queue.m_parent.m_log.Log(code >= 500 ? LogMask::Error : LogMask::Info, "TPCWorker", msg.c_str());
-        request.SetDone(code, msg);
-        return false;
-    };
-
-    do {
+    while (running_handles) {
         mres = curl_multi_perform(multi_handle, &running_handles);
         if (mres != CURLM_OK) {
-            return fail_and_exit(500, "Internal curl multi-handle error: " + std::string(curl_multi_strerror(mres)));
+            fail("Internal curl multi-handle error: " + std::string(curl_multi_strerror(mres)), LogMask::Error);
+            return true;
         }
 
         now = time(NULL);
@@ -74,26 +81,30 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCReq
             }
         } while (msg);
 
+        if (request.IsCancelled()) {
+            fail("Transfer cancelled", LogMask::Info);
+            return true;
+        }
+        if (running_handles == 0) {
+            break;
+        }
+
         mres = curl_multi_wait(multi_handle, NULL, 0, 1000, nullptr);
         if (mres != CURLM_OK) {
-            return fail_and_exit(500, "Error during curl_multi_wait: " + std::string(curl_multi_strerror(mres)));
+            fail("Error during curl_multi_wait: " + std::string(curl_multi_strerror(mres)), LogMask::Error);
+            return true;
         }
-
-        if (!request.IsActive()) {
-            return fail_and_exit(499, "Transfer cancelled");
-        }
-
-    } while (running_handles);
+    }
 
     request.UpdateRemoteConnDesc();
 
     if (res == static_cast<CURLcode>(-1)) {
-        return fail_and_exit(500, "Internal state error in libcurl - no transfer results returned");
+        fail("Internal state error in libcurl - no transfer results returned", LogMask::Error);
+        return true;
     }
 
     curl_multi_remove_handle(multi_handle, curl);
-    request.SetDone(res, "Transfer complete");
-
+    request.SetDone("Transfer complete", res);
     return true;
 }
 
@@ -106,7 +117,6 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
         m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker",
                                    "Unable to create"
                                    " a libcurl multi-handle; fatal error for worker");
-        m_queue.Done(this);
         return;
     }
 
@@ -119,15 +129,9 @@ void TPCRequestManager::TPCQueue::TPCWorker::Run() {
                 break;
             }
         }
-        if (!RunCurl(multi_handle, *request)) {
-            m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker",
-                                       "Worker's multi-handle"
-                                       " caused an internal error.  Worker immediately exiting");
-            break;
-        }
+        RunCurl(multi_handle, *request);
     }
     curl_multi_cleanup(multi_handle);
-    m_queue.Done(this);
 }
 
 void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
@@ -135,11 +139,17 @@ void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
     auto it = std::remove_if(m_workers.begin(), m_workers.end(), [&](std::unique_ptr<TPCWorker> &other) { return other.get() == worker; });
     m_workers.erase(it, m_workers.end());
 
-    if (m_workers.empty()) {
-        m_done = true;
-        lock.unlock();
-        m_parent.Done(m_identifier);
+    if (!m_workers.empty()) {
+        return;
     }
+    m_done.store(true, std::memory_order_release);
+    for (TPCRequest *op : m_ops) {
+        op->SetDone("TPC worker pool shut down before the transfer started");
+    }
+    m_ops.clear();
+    std::string ident = m_identifier;
+    lock.unlock();
+    m_parent.Done(ident);
 }
 
 void TPCRequestManager::Done(const std::string &ident) {
@@ -169,6 +179,9 @@ void TPCRequestManager::Done(const std::string &ident) {
 //   "mostly idle" workers in the thread pool.
 bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
     std::unique_lock<std::mutex> lk(m_mutex);
+    if (m_done.load(std::memory_order_acquire)) {
+        return false;
+    }
     if (m_ops.size() == m_max_pending_ops) {
         m_parent.m_log.Log(LogMask::Warning, "TPCQueue", "Queue is full; rejecting request");
         return false;
@@ -184,7 +197,8 @@ bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
 
     if (m_workers.size() < m_max_workers) {
         auto worker = std::make_unique<TPCRequestManager::TPCQueue::TPCWorker>(handler.GetLabel(), *this);
-        std::thread t(TPCRequestManager::TPCQueue::TPCWorker::RunStatic, worker.get());
+        auto self = shared_from_this();
+        std::thread t(TPCRequestManager::TPCQueue::TPCWorker::RunStatic, self, worker.get());
         t.detach();
         m_workers.push_back(std::move(worker));
     }
@@ -225,13 +239,21 @@ TPCRequestManager::TPCRequest *TPCRequestManager::TPCQueue::ConsumeUntil(std::ch
     return result;
 }
 
-void TPCRequestManager::TPCRequest::SetActive() { m_active.store(true, std::memory_order_relaxed); }
+void TPCRequestManager::TPCRequest::Cancel() { m_cancelled.store(true, std::memory_order_relaxed); }
 
-void TPCRequestManager::TPCRequest::Cancel() { m_active.store(false, std::memory_order_relaxed); }
+bool TPCRequestManager::TPCRequest::IsCancelled() const { return m_cancelled.load(std::memory_order_relaxed); }
 
 CURL *TPCRequestManager::TPCRequest::GetHandle() const { return m_curl; }
 
-bool TPCRequestManager::TPCRequest::IsActive() const { return m_active.load(std::memory_order_relaxed); }
+std::string TPCRequestManager::TPCRequest::GetMessage() {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    return m_message;
+}
+
+int TPCRequestManager::TPCRequest::GetCurlResult() {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    return m_curl_result;
+}
 
 std::string TPCRequestManager::TPCRequest::GetLabel() const { return m_label; }
 
@@ -275,18 +297,25 @@ std::string TPCRequestManager::TPCRequest::GetRemoteConnDesc() {
     return m_conn_list;
 }
 
-void TPCRequestManager::TPCRequest::SetDone(int status, const std::string &msg) {
+void TPCRequestManager::TPCRequest::SetDone(const std::string &msg, int curl_result) {
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_status = status;
+    if (m_finished) {
+        return;
+    }
+    m_curl_result = curl_result;
     m_message = msg;
+    m_finished = true;
     m_cv.notify_one();
 }
 
-int TPCRequestManager::TPCRequest::WaitFor(std::chrono::steady_clock::duration dur) {
+bool TPCRequestManager::TPCRequest::WaitFor(std::chrono::steady_clock::duration dur) {
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_cv.wait_for(lock, dur, [&] { return m_status >= 0; });
+    return m_cv.wait_for(lock, dur, [&] { return m_finished; });
+}
 
-    return m_status;
+void TPCRequestManager::TPCRequest::WaitUntilFinished() {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_cv.wait(lock, [&] { return m_finished; });
 }
 
 TPCRequestManager::TPCRequestManager(XrdOucEnv &xrdEnv, XrdSysError &eDest) : m_log(eDest), m_xrdEnv(xrdEnv) {}
@@ -297,43 +326,42 @@ void TPCRequestManager::SetWorkerIdleTimeout(std::chrono::steady_clock::duration
 // the request will be queued until a worker is available.  If the queue is
 // full, the request will be rejected and false will be returned.
 bool TPCRequestManager::Produce(TPCRequestManager::TPCRequest &handler) {
-    std::shared_ptr<TPCQueue> queue;
-    // Get the queue from our per-label map.  To avoid a race condition,
-    // if the queue we get has already been shut down, we release the lock
-    // and try again (with the expectation that the queue will eventually
-    // get the lock and remove itself from the map).
-    while (true) {
-        m_mutex.lock_shared();
-        std::lock_guard<std::shared_mutex> guard{m_mutex, std::adopt_lock};
-        auto iter = m_pool_map.find(handler.GetLabel());
-        if (iter != m_pool_map.end()) {
-            if (!iter->second->IsDone()) {
-                queue = iter->second;
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    if (!queue) {
-        auto created_queue = false;
-        std::string queue_name = "";
+    for (;;) {
+        std::shared_ptr<TPCQueue> queue;
         {
-            std::lock_guard<std::shared_mutex> guard(m_mutex);
+            std::shared_lock<std::shared_mutex> guard(m_mutex);
             auto iter = m_pool_map.find(handler.GetLabel());
-            if (iter == m_pool_map.end()) {
-                queue = std::make_shared<TPCQueue>(handler.GetLabel(), *this);
-                m_pool_map.insert(iter, {handler.GetLabel(), queue});
-                created_queue = true;
-                queue_name = handler.GetLabel();
-            } else {
+            if (iter != m_pool_map.end() && !iter->second->IsDone()) {
                 queue = iter->second;
             }
         }
-        if (created_queue) {
-            m_log.Log(LogMask::Info, "RequestManager", "Created new TPC request queue for", queue_name.c_str());
+        if (!queue) {
+            bool created_queue = false;
+            std::string queue_name;
+            {
+                std::unique_lock<std::shared_mutex> guard(m_mutex);
+                auto iter = m_pool_map.find(handler.GetLabel());
+                if (iter == m_pool_map.end() || iter->second->IsDone()) {
+                    queue = std::make_shared<TPCQueue>(handler.GetLabel(), *this);
+                    if (iter != m_pool_map.end()) {
+                        m_pool_map.erase(iter);
+                    }
+                    m_pool_map.emplace(handler.GetLabel(), queue);
+                    created_queue = true;
+                    queue_name = handler.GetLabel();
+                } else {
+                    queue = iter->second;
+                }
+            }
+            if (created_queue) {
+                m_log.Log(LogMask::Info, "RequestManager", "Created new TPC request queue for", queue_name.c_str());
+            }
+        }
+        if (queue->Produce(handler)) {
+            return true;
+        }
+        if (!queue->IsDone()) {
+            return false;
         }
     }
-
-    return queue->Produce(handler);
 }

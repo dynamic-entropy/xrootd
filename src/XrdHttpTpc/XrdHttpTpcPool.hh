@@ -35,19 +35,22 @@ class TPCRequestManager final {
        public:
         TPCRequest(const std::string &label, CURL *handle) : m_label(label), m_curl(handle) {}
 
-        int WaitFor(std::chrono::steady_clock::duration);
+        bool WaitFor(std::chrono::steady_clock::duration);
+        void WaitUntilFinished();
         CURL *GetHandle() const;
         std::string GetLabel() const;
+        std::string GetMessage();
+        int GetCurlResult();
         std::string GetRemoteConnDesc();
-        void SetActive();
-        void SetDone(int status, const std::string &msg);
-        bool IsActive() const;
+        void SetDone(const std::string &msg, int curl_result = -1);
         void Cancel();
+        bool IsCancelled() const;
         void UpdateRemoteConnDesc();
 
        private:
-        std::atomic<bool> m_active{false};
-        int m_status{-1};
+        std::atomic<bool> m_cancelled{false};
+        bool m_finished{false};
+        int m_curl_result{-1};
         std::string m_conn_list;
         std::mutex m_conn_mutex;
         std::atomic<off_t> m_progress_offset{0};
@@ -69,7 +72,7 @@ class TPCRequestManager final {
     void SetMaxIdleRequests(unsigned max_pending_ops) { m_max_pending_ops = max_pending_ops; }
 
    private:
-    class TPCQueue {
+    class TPCQueue : public std::enable_shared_from_this<TPCQueue> {
         class TPCWorker;
 
        public:
@@ -79,7 +82,7 @@ class TPCRequestManager final {
         TPCRequest *TryConsume();
         TPCRequest *ConsumeUntil(std::chrono::steady_clock::duration dur, TPCWorker *worker);
         void Done(TPCWorker *);
-        bool IsDone() const { return m_done; }
+        bool IsDone() const { return m_done.load(std::memory_order_acquire); }
 
        private:
         class TPCWorker final {
@@ -88,7 +91,7 @@ class TPCRequestManager final {
             TPCWorker(const TPCWorker &) = delete;
 
             void Run();
-            static void RunStatic(TPCWorker *myself);
+            static void RunStatic(std::shared_ptr<TPCQueue> queue, TPCWorker *myself);
 
             bool IsIdle() const { return m_idle; }
             void SetIdle(bool idle) { m_idle = idle; }
@@ -105,7 +108,7 @@ class TPCRequestManager final {
             TPCQueue &m_queue;
         };
 
-        bool m_done{false};
+        std::atomic<bool> m_done{false};
         // Opaque label supplied with the transfer.  The pool does not interpret it.
         const std::string m_identifier;
         std::vector<std::unique_ptr<TPCWorker>> m_workers;

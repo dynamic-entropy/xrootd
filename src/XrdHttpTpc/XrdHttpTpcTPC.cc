@@ -828,8 +828,10 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
     int retval = req.StartChunkedResp(202, NULL, "Content-Type: text/plain");
     if (retval) {
         request.Cancel();
+        request.WaitUntilFinished();
         logTransferEvent(LogMask::Error, rec, "RESPONSE_FAIL",
             "Failed to send the initial response to the TPC client");
+        return retval;
     } else {
         logTransferEvent(LogMask::Debug, rec, "RESPONSE_START",
             "Initial transfer response sent to the TPC client");
@@ -839,9 +841,10 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
     off_t last_advance_bytes = 0;
     time_t last_advance_time = time(NULL);
     time_t transfer_start = last_advance_time;
+    bool marker_failed = false;
     CURLcode res = static_cast<CURLcode>(-1);
 
-    while ((res = (CURLcode)request.WaitFor(std::chrono::seconds(m_marker_period))) < 0) {
+    while (!request.WaitFor(std::chrono::seconds(m_marker_period))) {
         auto now = time(NULL);
         std::string conn_desc = request.GetRemoteConnDesc();
         off_t bytes_xfer = state.BytesTransferred();
@@ -851,6 +854,7 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
         }
         if (SendPerfMarker(req, rec, state, conn_desc)) {
             request.Cancel();
+            marker_failed = true;
             logTransferEvent(LogMask::Error, rec, "PERFMARKER_FAIL", "Failed to send a perf marker to the TPC client");
         }
         int timeout = (transfer_start == last_advance_time) ? m_first_timeout : m_timeout;
@@ -865,6 +869,12 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
                << " seconds.";
             state.SetErrorMessage(ss.str());
         }
+    }
+    if (marker_failed) {
+        return -1;
+    }
+    if (request.GetCurlResult() >= 0) {
+        res = static_cast<CURLcode>(request.GetCurlResult());
     }
 
     // The transfer is over at this point: any error recorded so far - a failed
@@ -935,7 +945,7 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
         logTransferEvent(LogMask::Error, rec, "TRANSFER_FAIL", ss2.str());
         ss2 << finalizeErrorSuffix;
         ss << generateClientErr(ss2, rec);
-    } else if (res != CURLE_OK) {
+    } else if (res != static_cast<CURLcode>(-1) && res != CURLE_OK) {
         std::stringstream ss2;
         ss2 << "Internal transfer failure";
         std::stringstream ss3;
@@ -943,6 +953,14 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
         logTransferEvent(LogMask::Error, rec, "TRANSFER_FAIL", ss3.str());
         ss2 << finalizeErrorSuffix;
         ss << generateClientErr(ss2, rec, res);
+    } else if (res == static_cast<CURLcode>(-1)) {
+        std::stringstream ss2;
+        std::string msg = request.GetMessage();
+        if (msg.empty()) {msg = "Internal transfer failure";}
+        ss2 << msg;
+        logTransferEvent(LogMask::Error, rec, "TRANSFER_FAIL", ss2.str());
+        ss2 << finalizeErrorSuffix;
+        ss << generateClientErr(ss2, rec);
     } else if (!finalizeErrorMsg.empty()) {
         // Nothing else went wrong: the flush/close failure is the reason of the failure.
         std::stringstream ss2;
