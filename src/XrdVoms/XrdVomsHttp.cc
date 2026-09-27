@@ -44,6 +44,7 @@
   
 #include "XrdVersion.hh" 
 #include "XrdHttp/XrdHttpSecXtractor.hh"
+#include "XrdSec/XrdSecEntityAttr.hh"
 #include "XrdSec/XrdSecInterface.hh"
 
 #include "XrdVoms.hh"
@@ -103,9 +104,16 @@ int XrdVomsHttp::GetSecData(XrdLink *lp, XrdSecEntity &sec, SSL *ssl)
 //
    sec.creds = (char *)&xCerts;
 
-// Do the voms tango now and upon success pretend we are "gsi" authentication
+// Do the voms tango now and upon success pretend we are "gsi" authentication.
+// Authz keys off prot==gsi, so keep that, but record the wire protocol first:
+// callers such as OpenVerify otherwise treat this HTTPS client as xroot.
 //
-   if (!(rc = vomsFun.VOMSFun(sec))) strcpy(sec.prot, "gsi");
+   if (!(rc = vomsFun.VOMSFun(sec)))
+      {if (sec.eaAPI &&
+           (!strcmp(sec.prot, "http") || !strcmp(sec.prot, "https")))
+          sec.eaAPI->Add("xrd.httpprot", sec.prot, true);
+       strcpy(sec.prot, "gsi");
+      }
 
 // Free the x509 cert the chain will stick arround until the session is freed
 //
