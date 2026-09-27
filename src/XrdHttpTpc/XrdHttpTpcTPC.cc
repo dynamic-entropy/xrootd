@@ -833,6 +833,10 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
         if (bytes_xfer > last_advance_bytes) {
             last_advance_bytes = bytes_xfer;
             last_advance_time = now;
+        } else if (!request.HasStarted()) {
+            // Still queued.  Do not count wait time as a transfer stall.
+            last_advance_time = now;
+            transfer_start = now;
         }
         state.SetConnectionDescription(request.GetRemoteConnDesc());
         if (SendPerfMarker(req, rec, state)) {
@@ -841,7 +845,7 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
             logTransferEvent(LogMask::Error, rec, "PERFMARKER_FAIL", "Failed to send a perf marker to the TPC client");
         }
         int timeout = (transfer_start == last_advance_time) ? m_first_timeout : m_timeout;
-        if (now > last_advance_time + timeout) {
+        if (request.HasStarted() && now > last_advance_time + timeout) {
             const char *log_prefix = rec.log_prefix.c_str();
             bool tpc_pull = strncmp("Pull", log_prefix, 4) == 0;
             request.Cancel();

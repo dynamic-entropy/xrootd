@@ -46,9 +46,12 @@ class TPCRequestManager final {
         void Cancel();
         bool IsCancelled() const;
         void UpdateRemoteConnDesc();
+        void MarkStarted() { m_started.store(true, std::memory_order_release); }
+        bool HasStarted() const { return m_started.load(std::memory_order_acquire); }
 
        private:
         std::atomic<bool> m_cancelled{false};
+        std::atomic<bool> m_started{false};
         bool m_finished{false};
         int m_curl_result{-1};
         std::string m_conn_list;

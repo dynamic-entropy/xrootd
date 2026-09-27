@@ -27,6 +27,7 @@ void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(std::shared_ptr<TPCQueue>
 }
 
 bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCRequestManager::TPCRequest &request) {
+    request.MarkStarted();
     if (request.IsCancelled()) {
         request.SetDone("Transfer cancelled");
         return true;
