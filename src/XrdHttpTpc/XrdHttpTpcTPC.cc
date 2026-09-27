@@ -171,9 +171,9 @@ int TPCHandler::opensocket_callback(void *clientp,
 int TPCHandler::closesocket_callback(void *clientp, curl_socket_t fd) {
   TPCLogRecord * rec = (TPCLogRecord *)clientp;
 
-  // Destroy the PMark handle associated to the file descriptor before closing it.
-  // Otherwise, we would lose the socket usage information if the socket is closed before
-  // the PMark handle is closed.
+  // clientp is only used for sockets that cannot outlive rec (HEAD, and
+  // multi-stream transfers that do not use the worker pool).  Pooled data
+  // transfers replace this callback with the worker's closer.
   if (rec) rec->pmarkManager.endPmark(fd);
 
   return close(fd);
@@ -791,10 +791,10 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
     XrdHttpTpc::PMarkManager::CurlMarkCtx markCtx{&rec.pmarkManager, curl};
     if (rec.pmarkManager.isEnabled()) {
         rec.pmarkManager.armReuseMark(markCtx);
-        curl_easy_setopt(curl, CURLOPT_PRIVATE, &rec.pmarkManager);
     }
 
     TPCRequestManager::TPCRequest request("tpc", curl);
+    request.SetPMark(&rec.pmarkManager);
 
     if (!m_request_manager.Produce(request)) {
         int retval = req.StartChunkedResp(429, "Too Many Requests",
@@ -1009,8 +1009,11 @@ int TPCHandler::ProcessPushReq(const std::string & resource, XrdHttpExtReq &req)
 #endif
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
+    // CLOSESOCKETDATA is not &rec: libcurl copies it onto the connection, which
+    // the worker may cache after this stack frame is gone.  The worker installs
+    // its own closer before the data transfer; HEAD uses close-only.
     curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
+    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, nullptr);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT);
@@ -1136,8 +1139,11 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
 #endif
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, opensocket_callback);
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, &rec);
+    // CLOSESOCKETDATA is not &rec: libcurl copies it onto the connection, which
+    // the worker may cache after this stack frame is gone.  The worker installs
+    // its own closer before the data transfer; HEAD uses close-only.
     curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
-    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, &rec);
+    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, nullptr);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, sockopt_callback);
     curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA, &rec);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, CONNECT_TIMEOUT);

@@ -18,6 +18,9 @@
 // Forward dec'ls
 class XrdOucEnv;
 class XrdSysError;
+namespace XrdHttpTpc {
+class PMarkManager;
+}
 
 // A pool manager for TPC requests
 //
@@ -48,6 +51,9 @@ class TPCRequestManager final {
         void UpdateRemoteConnDesc();
         void MarkStarted() { m_started.store(true, std::memory_order_release); }
         bool HasStarted() const { return m_started.load(std::memory_order_acquire); }
+        // Valid only while the HTTP thread is blocked in WaitFor/WaitUntilFinished.
+        void SetPMark(XrdHttpTpc::PMarkManager *pmark) { m_pmark = pmark; }
+        XrdHttpTpc::PMarkManager *GetPMark() const { return m_pmark; }
 
        private:
         std::atomic<bool> m_cancelled{false};
@@ -64,6 +70,7 @@ class TPCRequestManager final {
         std::condition_variable m_cv;
         std::mutex m_mutex;
         std::string m_message;
+        XrdHttpTpc::PMarkManager *m_pmark{nullptr};
     };
 
     TPCRequestManager(XrdOucEnv &xrdEnv, XrdSysError &eDest);
@@ -104,8 +111,11 @@ class TPCRequestManager final {
 
            private:
             bool RunCurl(CURLM *multi_handle, TPCRequest &request);
+            static int closesocket_callback(void *clientp, curl_socket_t fd);
 
             bool m_idle{false};
+            // Set only while RunCurl drives a transfer; cleared before SetDone.
+            XrdHttpTpc::PMarkManager *m_active_pmark{nullptr};
             // Label for this worker. Always set to the m_identifier of the queue it serves.
             const std::string m_label;
             TPCQueue &m_queue;
