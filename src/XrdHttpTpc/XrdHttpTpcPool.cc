@@ -208,6 +208,9 @@ bool TPCRequestManager::TPCQueue::Produce(TPCRequest &handler) {
     m_ops.push_back(&handler);
     for (auto &worker : m_workers) {
         if (worker->IsIdle()) {
+            // Clear idle before notify so a second Produce cannot treat this
+            // worker as free and skip creating another thread.
+            worker->SetIdle(false);
             worker->m_cv.notify_one();
             return true;
         }
