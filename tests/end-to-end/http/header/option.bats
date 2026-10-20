@@ -15,12 +15,22 @@ export XRD_PLUGINCONFDIR="$BATS_TEST_DIRNAME"
 # the option takes a mandatory argument
 #
 
+# Usage() exits 22. A crash is 139, and `run !` treats that as success, so
+# these tests require 22. On musl, a short option that needs an argument
+# and follows an operand leaves a null argv slot; `file -H` hits it.
 @test "-H with no argument fails" {
-	run ! xrdcp -H
+	run -22 xrdcp -H
+	assert_output --partial "argument missing"
+}
+
+@test "-H after an operand fails" {
+	run -22 xrdcp file -H
+	assert_output --partial "argument missing"
 }
 
 @test "--header with no argument fails" {
-	run ! xrdcp --header
+	run -22 xrdcp --header
+	assert_output --partial "argument missing"
 }
 
 #
