@@ -54,6 +54,37 @@ std::string urlquote(const std::string input) {
 	return output;
 }
 
+// Build the ListObjectsV2 URL of a directory. prefix is set to the object
+// name with a trailing slash, and is empty for the bucket root.
+bool ListUrl(const std::string &s3_url, const std::string &query, std::string &https_url, std::string &prefix, std::string &err_msg) {
+    if (!Factory::GenerateHttpUrl(s3_url, https_url, &prefix, err_msg)) {
+        return false;
+    }
+    prefix = prefix.substr(0, prefix.find('?'));
+    if (!prefix.empty() && prefix.back() != '/') {
+        prefix += "/";
+    }
+    https_url += (https_url.find('?') == std::string::npos) ? "?" : "&";
+    https_url += "list-type=2&delimiter=/&encoding-type=url" + query;
+    // An empty prefix= is dropped from the signature and the request is rejected.
+    if (!prefix.empty()) {
+        https_url += "&prefix=" + urlquote(prefix);
+    }
+    return true;
+}
+
+// Name of a listed key below prefix. The key equal to prefix gives "".
+std::string ChildName(std::string_view encoded, const std::string &prefix) {
+    std::string name = XrdOucUtils::UrlDecode(std::string(encoded));
+    if (!prefix.empty() && name.compare(0, prefix.size(), prefix) == 0) {
+        name.erase(0, prefix.size());
+    }
+    if (!name.empty() && name.back() == '/') {
+        name.pop_back();
+    }
+    return name;
+}
+
 class StatHandler : public XrdCl::ResponseHandler {
 public:
     StatHandler(const std::string &path, const std::string &s3_url, XrdClHttp::HeaderCallout *header_callout, XrdCl::ResponseHandler *handler, time_t timeout, XrdCl::Log &log) :
@@ -144,6 +175,35 @@ private:
     XrdCl::ResponseHandler *m_handler{nullptr};
 };
 
+// The listing asks for one key, so a truncated page has another object and
+// the directory is refused. The sentinel is removed only when it is the sole
+// key.
+class RmDirHandler : public XrdCl::ResponseHandler {
+public:
+    RmDirHandler(Filesystem *fs, std::string sentinel, std::string path, std::string prefix, XrdCl::ResponseHandler *handler, time_t expiry) :
+        m_fs(fs),
+        m_sentinel(std::move(sentinel)),
+        m_path(std::move(path)),
+        m_prefix(std::move(prefix)),
+        m_handler(handler),
+        m_expiry(expiry)
+    {}
+
+    virtual void HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::AnyObject *response_raw) override;
+
+private:
+    enum class Page { Empty, Missing, Occupied, Bad };
+
+    Page ReadPage(XrdCl::Buffer *buffer) const;
+
+    Filesystem *m_fs;
+    std::string m_sentinel;
+    std::string m_path;
+    std::string m_prefix;
+    XrdCl::ResponseHandler *m_handler{nullptr};
+    time_t m_expiry;
+};
+
 void
 StatHandler::HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::AnyObject *response_raw) {
     std::unique_ptr<StatHandler> self(this);
@@ -165,20 +225,9 @@ StatHandler::HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::AnyObject *r
     std::string https_url, err_msg;
     const auto s3_url = XrdOucUtils::JoinUrl(m_s3_url, m_path);
     std::string obj;
-    if (!Factory::GenerateHttpUrl(s3_url, https_url, &obj, err_msg)) {
+    if (!ListUrl(s3_url, "", https_url, obj, err_msg)) {
         if (m_handler) return m_handler->HandleResponse(new XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errInvalidAddr, 0, err_msg), nullptr);
         else return;
-    }
-    obj = obj.substr(0, obj.find('?'));
-    if (!obj.empty() && obj.back() != '/') {
-        obj += "/";
-    }
-    auto query_loc = https_url.find('?');
-    https_url += (query_loc == std::string::npos) ? "?" : "&";
-    https_url += "list-type=2&delimiter=/&encoding-type=url";
-    // An empty prefix= is dropped from the signature and the request is rejected.
-    if (!obj.empty()) {
-        https_url += "&prefix=" + urlquote(obj);
     }
 
     auto expiry = time(NULL) + m_timeout;
@@ -311,17 +360,6 @@ DirListResponseHandler::HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::A
 	bool isTruncated = false;
     std::string ct;
     bool found_prefix_marker = false;
-    auto relativeName = [&](std::string_view encoded) {
-        std::string name = XrdOucUtils::UrlDecode(std::string(encoded));
-        if (!m_prefix.empty() &&
-            name.compare(0, m_prefix.size(), m_prefix) == 0) {
-            name.erase(0, m_prefix.size());
-        }
-        if (!name.empty() && name.back() == '/') {
-            name.pop_back();
-        }
-        return name;
-    };
 	for (auto child = elem->FirstChildElement(); child != nullptr;
 		 child = child->NextSiblingElement()) {
 		if (!strcmp(child->Value(), "IsTruncated")) {
@@ -338,7 +376,7 @@ DirListResponseHandler::HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::A
 				if (prefixChar != nullptr) {
 					auto prefixStr = Factory::TrimView(prefixChar);
 					if (!prefixStr.empty()) {
-                        auto name = relativeName(prefixStr);
+                        auto name = ChildName(prefixStr, m_prefix);
                         if (name.empty()) {
                             found_prefix_marker = true;
                         } else {
@@ -365,7 +403,7 @@ DirListResponseHandler::HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::A
             if (keyStr.empty()) {
                 continue;
             }
-            auto name = relativeName(keyStr);
+            auto name = ChildName(keyStr, m_prefix);
             if (name.empty()) {
                 found_prefix_marker = true;
                 if (m_existence_check) break;
@@ -489,6 +527,93 @@ MkdirHandler::HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::AnyObject *
     }
 }
 
+void
+RmDirHandler::HandleResponse(XrdCl::XRootDStatus *status_raw, XrdCl::AnyObject *response_raw) {
+    std::unique_ptr<RmDirHandler> self(this);
+    std::unique_ptr<XrdCl::XRootDStatus> status(status_raw);
+    std::unique_ptr<XrdCl::AnyObject> response(response_raw);
+    if (!m_handler) {
+        return;
+    }
+    if (!status || !status->IsOK()) {
+        m_handler->HandleResponse(status.release(), response.release());
+        return;
+    }
+    XrdCl::Buffer *buffer = nullptr;
+    if (response) {
+        response->Get(buffer);
+    }
+    if (!buffer) {
+        m_handler->HandleResponse(new XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errInvalidResponse, 0, "No buffer in response object"), nullptr);
+        return;
+    }
+    switch (ReadPage(buffer)) {
+    case Page::Empty:
+        break;
+    case Page::Missing:
+        m_handler->HandleResponse(new XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errErrorResponse, kXR_NotFound, "No such directory"), nullptr);
+        return;
+    case Page::Occupied:
+        m_handler->HandleResponse(new XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errErrorResponse, kXR_ItExists, "Directory not empty"), nullptr);
+        return;
+    case Page::Bad:
+        m_handler->HandleResponse(new XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errInvalidResponse, 0, "Failed to parse S3 listing"), nullptr);
+        return;
+    }
+    time_t now = time(NULL);
+    if (now >= m_expiry) {
+        m_handler->HandleResponse(
+            new XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errOperationExpired, 0, "Request timed out"),
+            nullptr);
+        return;
+    }
+    auto st = m_fs->Rm(m_path, m_handler, m_expiry - now);
+    if (!st.IsOK()) {
+        m_handler->HandleResponse(new XrdCl::XRootDStatus(st), nullptr);
+    }
+}
+
+RmDirHandler::Page
+RmDirHandler::ReadPage(XrdCl::Buffer *buffer) const {
+    TiXmlDocument doc;
+    std::string body(buffer->GetBuffer(), buffer->GetSize());
+    doc.Parse(body.c_str());
+    auto root = doc.RootElement();
+    if (doc.Error() || !root || strcmp(root->Value(), "ListBucketResult")) {
+        return Page::Bad;
+    }
+    bool occupied = false, sentinel = false;
+    for (auto child = root->FirstChildElement(); child; child = child->NextSiblingElement()) {
+        if (!strcmp(child->Value(), "IsTruncated")) {
+            auto text = child->GetText();
+            if (text && !strcasecmp(text, "true")) {
+                occupied = true;
+            }
+            continue;
+        }
+        const char *tag = nullptr;
+        if (!strcmp(child->Value(), "Contents")) {
+            tag = "Key";
+        } else if (!strcmp(child->Value(), "CommonPrefixes")) {
+            tag = "Prefix";
+        }
+        if (!tag) {
+            continue;
+        }
+        auto elem = child->FirstChildElement(tag);
+        if (!elem || !elem->GetText()) {
+            continue;
+        }
+        if (ChildName(Factory::TrimView(elem->GetText()), m_prefix) == m_sentinel) {
+            sentinel = true;
+        } else {
+            occupied = true;
+        }
+    }
+    if (occupied) return Page::Occupied;
+    return sentinel ? Page::Empty : Page::Missing;
+}
+
 
 } // namespace
 
@@ -512,22 +637,10 @@ Filesystem::DirList(const std::string          &path,
                     XrdCl::ResponseHandler     *handler,
                     time_t                      timeout)
 {
-    std::string https_url, err_msg;
+    std::string https_url, err_msg, obj;
     const auto s3_url = XrdOucUtils::JoinUrl(m_url.GetURL(), path);
-    std::string obj;
-    if (!Factory::GenerateHttpUrl(s3_url, https_url, &obj, err_msg)) {
+    if (!ListUrl(s3_url, "", https_url, obj, err_msg)) {
         return XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errInvalidAddr, 0, err_msg);
-    }
-    obj = obj.substr(0, obj.find('?'));
-    if (!obj.empty() && obj.back() != '/') {
-        obj += "/";
-    }
-    auto query_loc = https_url.find('?');
-    https_url += (query_loc == std::string::npos) ? "?" : "&";
-    https_url += "list-type=2&delimiter=/&encoding-type=url";
-    // An empty prefix= is dropped from the signature and the request is rejected.
-    if (!obj.empty()) {
-        https_url += "&prefix=" + urlquote(obj);
     }
 
     // File::Open turns a zero timeout into RequestTimeout for the first page.
@@ -711,7 +824,29 @@ Filesystem::RmDir(const std::string      &input_path,
     if (loc != std::string::npos) {
         path += input_path.substr(loc);
     }
-    return Rm(path, handler, timeout);
+
+    std::string https_url, err_msg, obj;
+    const auto s3_url = XrdOucUtils::JoinUrl(m_url.GetURL(), input_path);
+    if (!ListUrl(s3_url, "&max-keys=1", https_url, obj, err_msg)) {
+        return XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errInvalidAddr, 0, err_msg);
+    }
+    if (obj.empty()) {
+        return XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errErrorResponse, kXR_Unsupported, "Cannot remove the bucket root");
+    }
+
+    if (!timeout) {
+        int val = XrdCl::DefaultRequestTimeout;
+        XrdCl::DefaultEnv::GetEnv()->GetInt("RequestTimeout", val);
+        timeout = val;
+    }
+    auto expiry = time(NULL) + timeout;
+
+    return DownloadUrl(
+        https_url,
+        &m_header_callout,
+        new RmDirHandler(this, std::move(sentinel), std::move(path), std::move(obj), handler, expiry),
+        timeout
+    );
 }
 
 
@@ -741,9 +876,9 @@ Filesystem::Stat(const std::string      &path,
     }
     // HEAD of the bucket returns a zero-byte success. List it instead.
     if (obj.empty()) {
-        auto query_loc = https_url.find('?');
-        https_url += (query_loc == std::string::npos) ? "?" : "&";
-        https_url += "list-type=2&delimiter=/&encoding-type=url";
+        if (!ListUrl(s3_url, "", https_url, obj, err_msg)) {
+            return XrdCl::XRootDStatus(XrdCl::stError, XrdCl::errInvalidAddr, 0, err_msg);
+        }
         auto expiry = time(NULL) + timeout;
         return DownloadUrl(
             https_url,

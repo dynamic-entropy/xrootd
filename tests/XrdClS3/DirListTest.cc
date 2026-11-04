@@ -243,3 +243,110 @@ TEST_F(S3ListFixture, Mkdir)
     ASSERT_EQ(st.errNo, kXR_NotFound);
     ASSERT_EQ(si, nullptr);
 }
+
+TEST_F(S3ListFixture, RmDirNonEmpty)
+{
+    XrdCl::FileSystem fs(GetCacheURL());
+    std::string dir = "test-bucket/rmdir/occupied";
+    auto read = "?authz=" + GetReadToken();
+    auto write = "?authz=" + GetWriteToken();
+
+    auto st = fs.MkDir(dir + write, XrdCl::MkDirFlags::None, XrdCl::Access::Mode::None, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+
+    auto url = GetCacheURL() + "/" + dir + "/file.txt";
+    ASSERT_NO_FATAL_FAILURE(WritePattern(url, 16, 'a', 1));
+
+    st = fs.RmDir(dir + write, 10);
+    ASSERT_FALSE(st.IsOK());
+    ASSERT_EQ(st.code, XrdCl::errErrorResponse);
+    ASSERT_EQ(st.errNo, kXR_ItExists);
+
+    XrdCl::DirectoryList *list = nullptr;
+    st = fs.DirList(dir + read, XrdCl::DirListFlags::None, list, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+    ASSERT_NE(list, nullptr);
+    bool saw_file = false;
+    bool saw_sentinel = false;
+    for (uint32_t idx = 0; idx < list->GetSize(); idx++) {
+        auto name = list->At(idx)->GetName();
+        if (name == "file.txt") saw_file = true;
+        if (name == ".xrdcls3.dirsentinel") saw_sentinel = true;
+    }
+    EXPECT_TRUE(saw_file);
+    EXPECT_TRUE(saw_sentinel);
+    delete list;
+
+    list = nullptr;
+    st = fs.DirList(std::string("test-bucket/rmdir") + read, XrdCl::DirListFlags::None, list, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+    ASSERT_NE(list, nullptr);
+    bool saw_dir = false;
+    for (uint32_t idx = 0; idx < list->GetSize(); idx++) {
+        if (list->At(idx)->GetName() == "occupied") saw_dir = true;
+    }
+    EXPECT_TRUE(saw_dir);
+    delete list;
+
+    st = fs.Rm(dir + "/file.txt" + write, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+
+    st = fs.RmDir(dir + write, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+
+    XrdCl::StatInfo *si = nullptr;
+    st = fs.Stat(dir + read, si, 10);
+    ASSERT_FALSE(st.IsOK());
+    ASSERT_EQ(st.errNo, kXR_NotFound);
+    ASSERT_EQ(si, nullptr);
+}
+
+TEST_F(S3ListFixture, RmDirMissing)
+{
+    XrdCl::FileSystem fs(GetCacheURL());
+    auto write = "?authz=" + GetWriteToken();
+
+    auto st = fs.RmDir("test-bucket/rmdir/missing" + write, 10);
+    ASSERT_FALSE(st.IsOK());
+    ASSERT_EQ(st.code, XrdCl::errErrorResponse);
+    ASSERT_EQ(st.errNo, kXR_NotFound);
+
+    st = fs.RmDir("test-bucket/" + write, 10);
+    ASSERT_FALSE(st.IsOK());
+    ASSERT_EQ(st.errNo, kXR_Unsupported);
+}
+
+TEST_F(S3ListFixture, RmDirSubdirectory)
+{
+    XrdCl::FileSystem fs(GetCacheURL());
+    std::string dir = "test-bucket/rmdir/parent";
+    std::string child = dir + "/child";
+    auto read = "?authz=" + GetReadToken();
+    auto write = "?authz=" + GetWriteToken();
+
+    auto st = fs.MkDir(dir + write, XrdCl::MkDirFlags::None, XrdCl::Access::Mode::None, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+    st = fs.MkDir(child + write, XrdCl::MkDirFlags::None, XrdCl::Access::Mode::None, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+
+    st = fs.RmDir(dir + write, 10);
+    ASSERT_FALSE(st.IsOK());
+    ASSERT_EQ(st.errNo, kXR_ItExists);
+
+    XrdCl::StatInfo *si = nullptr;
+    st = fs.Stat(child + read, si, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+    ASSERT_TRUE(si->GetFlags() & XrdCl::StatInfo::IsDir);
+    delete si;
+
+    st = fs.RmDir(child + write, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+    st = fs.RmDir(dir + write, 10);
+    ASSERT_TRUE(st.IsOK()) << st.ToString();
+
+    si = nullptr;
+    st = fs.Stat(dir + read, si, 10);
+    ASSERT_FALSE(st.IsOK());
+    ASSERT_EQ(st.errNo, kXR_NotFound);
+    ASSERT_EQ(si, nullptr);
+}
