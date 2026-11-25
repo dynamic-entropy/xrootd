@@ -21,6 +21,8 @@
 
 
 #include <sstream>
+#include <sys/socket.h>
+
 #include "XrdHttpTpcPMarkManager.hh"
 #include "XrdNet/XrdNetUtils.hh"
 #include "XrdHttpTpc/XrdHttpTpcTPC.hh"
@@ -35,7 +37,7 @@ PMarkManager::SocketInfo::SocketInfo(int fd, const struct sockaddr * sockP) {
 PMarkManager::PMarkManager(XrdHttpExtReq & req, TPC::TpcType tpcType) : mPmark(req.pmark), mReq(req), mTransferWillStart(false), mTpcType(tpcType) {}
 
 void PMarkManager::addFd(int fd, const struct sockaddr * sockP) {
-  if(isEnabled() && mTransferWillStart) {
+  if(isEnabled() && mTransferWillStart && mQueuedFds.insert(fd).second) {
     // The transfer will start and the packet marking has been configured, this socket must be registered for future packet marking
     mSocketInfos.emplace(fd, sockP);
   }
@@ -64,6 +66,77 @@ void PMarkManager::startTransfer() {
   mTransferWillStart = true;
 }
 
+int PMarkManager::prereqCallback(void *clientp, char *, char *, int, int) {
+#if LIBCURL_VERSION_NUM >= 0x075000
+  auto *ctx = static_cast<CurlMarkCtx *>(clientp);
+  if (ctx && ctx->manager) {
+    ctx->manager->markCurlHandle(ctx->curl);
+  }
+  return CURL_PREREQFUNC_OK;
+#else
+  (void)clientp;
+  return 0;
+#endif
+}
+
+void PMarkManager::armReuseMark(CurlMarkCtx &ctx) {
+#if LIBCURL_VERSION_NUM >= 0x075000
+  if (!ctx.curl) {
+    return;
+  }
+  // Invoked after the connection is selected and before this request is sent,
+  // so the firefly's starting byte counters exclude this transfer.
+  curl_easy_setopt(ctx.curl, CURLOPT_PREREQFUNCTION, prereqCallback);
+  curl_easy_setopt(ctx.curl, CURLOPT_PREREQDATA, &ctx);
+#else
+  (void)ctx;
+#endif
+}
+
+void PMarkManager::markCurlHandle(CURL *curl) {
+  if (!curl || !isEnabled() || !mTransferWillStart) {
+    return;
+  }
+
+  curl_socket_t fd = CURL_SOCKET_BAD;
+#if LIBCURL_VERSION_NUM >= 0x072D00
+  if (curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &fd) != CURLE_OK) {
+    return;
+  }
+#else
+  long last = -1;
+  if (curl_easy_getinfo(curl, CURLINFO_LASTSOCKET, &last) != CURLE_OK) {
+    return;
+  }
+  fd = static_cast<curl_socket_t>(last);
+#endif
+  if (fd == CURL_SOCKET_BAD || fd < 0) {
+    return;
+  }
+  if (mPmarkHandles.find(static_cast<int>(fd)) != mPmarkHandles.end()) {
+    return;
+  }
+  if (mQueuedFds.find(static_cast<int>(fd)) != mQueuedFds.end()) {
+    beginPMarks();
+    return;
+  }
+
+  sockaddr_storage peer;
+  socklen_t peerLen = sizeof(peer);
+  if (getpeername(static_cast<int>(fd), reinterpret_cast<sockaddr *>(&peer), &peerLen) != 0) {
+    return;
+  }
+  addFd(static_cast<int>(fd), reinterpret_cast<sockaddr *>(&peer));
+  beginPMarks();
+}
+
+void PMarkManager::endTransferMarks() {
+  mPmarkHandles.clear();
+  std::queue<SocketInfo> empty;
+  std::swap(mSocketInfos, empty);
+  mQueuedFds.clear();
+}
+
 void PMarkManager::beginPMarks() {
   if(mSocketInfos.empty()) {
     return;
@@ -90,7 +163,9 @@ void PMarkManager::beginPMarks() {
     if(!pmark) {
       return;
     }
-    mPmarkHandles.emplace(sockInfo.client.addrInfo->SockFD(),std::unique_ptr<XrdNetPMark::Handle>(pmark));
+    int fd = sockInfo.client.addrInfo->SockFD();
+    mPmarkHandles.emplace(fd, std::unique_ptr<XrdNetPMark::Handle>(pmark));
+    mQueuedFds.erase(fd);
     mSocketInfos.pop();
   }
 
@@ -105,6 +180,7 @@ void PMarkManager::beginPMarks() {
 
     int fd = sockInfo.client.addrInfo->SockFD();
     mPmarkHandles.emplace(fd, std::unique_ptr<XrdNetPMark::Handle>(pmark));
+    mQueuedFds.erase(fd);
     mSocketInfos.pop();
   }
 }
