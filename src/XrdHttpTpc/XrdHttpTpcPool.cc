@@ -167,15 +167,15 @@ void TPCRequestManager::TPCQueue::Done(TPCWorker *worker) {
     m_ops.clear();
     std::string ident = m_identifier;
     lock.unlock();
-    m_parent.Done(ident);
+    m_parent.Done(ident, this);
 }
 
-void TPCRequestManager::Done(const std::string &ident) {
+void TPCRequestManager::Done(const std::string &ident, TPCQueue *queue) {
     m_log.Log(LogMask::Info, "TPCRequestManager", "Worker pool", ident.c_str(), "is idle and all workers have exited.");
     std::unique_lock<std::shared_mutex> lock(m_mutex);
 
     auto iter = m_pool_map.find(ident);
-    if (iter != m_pool_map.end()) {
+    if (iter != m_pool_map.end() && iter->second.get() == queue) {
         m_pool_map.erase(iter);
     }
 }

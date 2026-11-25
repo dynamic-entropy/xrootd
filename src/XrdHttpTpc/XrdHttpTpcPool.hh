@@ -117,7 +117,7 @@ class TPCRequestManager final {
         TPCRequestManager &m_parent;
     };
 
-    void Done(const std::string &ident);
+    void Done(const std::string &ident, TPCQueue *queue);
 
     static std::shared_mutex m_mutex;
     XrdSysError &m_log;  // Log object for the request manager
