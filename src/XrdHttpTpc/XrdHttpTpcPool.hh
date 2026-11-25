@@ -4,6 +4,7 @@
 #include <curl/curl.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -28,11 +29,15 @@ class PMarkManager;
 // each transfer.  The label is not interpreted here, so the policy for how
 // transfers share a pool can change without changing the pool itself.
 //
-// Transfers are packed onto as few workers as possible so libcurl can reuse TCP
-// connections.  Idle workers shut down; an unused pool has no running threads.
+// Every worker owns a libcurl multi-handle whose connection cache outlives the
+// transfer.  The most recently idle worker is woken first: it is the most
+// likely to hold a live connection, and the others age out after
+// m_idle_timeout.  An unused pool has no running threads.
 namespace TPC {
 
 class TPCRequestManager final {
+    class TPCQueue;
+
    public:
     class TPCRequest {
        public:
@@ -46,6 +51,8 @@ class TPCRequestManager final {
         int GetCurlResult();
         std::string GetRemoteConnDesc();
         void SetDone(const std::string &msg, int curl_result = -1);
+        // A request still waiting in its queue is withdrawn and finished at
+        // once; a running one is stopped by its worker.
         void Cancel();
         bool IsCancelled() const;
         void UpdateRemoteConnDesc();
@@ -56,6 +63,8 @@ class TPCRequestManager final {
         XrdHttpTpc::PMarkManager *GetPMark() const { return m_pmark; }
 
        private:
+        friend class TPCRequestManager;
+
         std::atomic<bool> m_cancelled{false};
         std::atomic<bool> m_started{false};
         bool m_finished{false};
@@ -71,11 +80,16 @@ class TPCRequestManager final {
         std::mutex m_mutex;
         std::string m_message;
         XrdHttpTpc::PMarkManager *m_pmark{nullptr};
+        std::weak_ptr<TPCQueue> m_queue;
     };
 
     TPCRequestManager(XrdOucEnv &xrdEnv, XrdSysError &eDest);
 
+    // Queue the request.  Returns false if its queue is full.
     bool Produce(TPCRequest &handler);
+    // Hand the request to an idle worker of its queue.  Returns false, without
+    // queueing the request, if the queue has no idle worker.
+    bool ProduceIfIdle(TPCRequest &handler);
 
     void SetWorkerIdleTimeout(std::chrono::steady_clock::duration dur);
     void SetMaxWorkers(unsigned max_workers) { m_max_workers = max_workers; }
@@ -88,48 +102,56 @@ class TPCRequestManager final {
        public:
         TPCQueue(const std::string &identifier, TPCRequestManager &parent) : m_identifier(identifier), m_parent(parent) {}
 
+        // Returns false if the queue is full or has shut down; IsDone() tells which.
         bool Produce(TPCRequest &handler);
-        TPCRequest *TryConsume();
-        TPCRequest *ConsumeUntil(std::chrono::steady_clock::duration dur, TPCWorker *worker);
-        void Done(TPCWorker *);
+        bool ProduceIfIdle(TPCRequest &handler);
+        bool Withdraw(TPCRequest &handler);
         bool IsDone() const { return m_done.load(std::memory_order_acquire); }
 
        private:
         class TPCWorker final {
            public:
-            TPCWorker(const std::string &label, TPCQueue &queue);
+            explicit TPCWorker(TPCQueue &queue) : m_queue(queue) {}
             TPCWorker(const TPCWorker &) = delete;
 
             void Run();
-            static void RunStatic(std::shared_ptr<TPCQueue> queue, TPCWorker *myself);
+            static void RunStatic(std::shared_ptr<TPCQueue> queue, std::unique_ptr<TPCWorker> myself);
 
-            bool IsIdle() const { return m_idle; }
-            void SetIdle(bool idle) { m_idle = idle; }
+            // Guarded by the queue's m_mutex.  Set when the worker is handed a
+            // request (or spawned for one) that it has not yet taken.
+            bool m_claimed{false};
             std::condition_variable m_cv;
-
-            std::string getLabel() const { return m_label; }
 
            private:
             bool RunCurl(CURLM *multi_handle, TPCRequest &request);
             static int closesocket_callback(void *clientp, curl_socket_t fd);
 
-            bool m_idle{false};
             // Set only while RunCurl drives a transfer; cleared before SetDone.
             XrdHttpTpc::PMarkManager *m_active_pmark{nullptr};
-            // Label for this worker. Always set to the m_identifier of the queue it serves.
-            const std::string m_label;
             TPCQueue &m_queue;
         };
+
+        // Return the next request for the worker, waiting while it is idle.
+        // Returns nullptr once the worker must exit; it has then left the queue.
+        TPCRequest *Consume(TPCWorker &worker, bool can_run);
+        // The helpers below require m_mutex.
+        bool ClaimIdleWorker();
+        bool SpawnWorker();
 
         std::atomic<bool> m_done{false};
         // Opaque label supplied with the transfer.  The pool does not interpret it.
         const std::string m_identifier;
-        std::vector<std::unique_ptr<TPCWorker>> m_workers;
+        std::vector<TPCWorker *> m_workers;
+        // Idle workers, the most recently idle at the back.
+        std::vector<TPCWorker *> m_idle;
         std::deque<TPCRequest *> m_ops;
+        // Workers that have been handed a request but not yet taken it.
+        size_t m_claims{0};
         std::mutex m_mutex;
         TPCRequestManager &m_parent;
     };
 
+    std::shared_ptr<TPCQueue> GetQueue(const std::string &ident, bool create);
     void Done(const std::string &ident, TPCQueue *queue);
 
     static std::shared_mutex m_mutex;
@@ -138,7 +160,6 @@ class TPCRequestManager final {
     static std::unordered_map<std::string, std::shared_ptr<TPCQueue>> m_pool_map;
     static unsigned m_max_pending_ops;
     static unsigned m_max_workers;
-    static std::once_flag m_init_once;
     XrdOucEnv &m_xrdEnv;
 };
 

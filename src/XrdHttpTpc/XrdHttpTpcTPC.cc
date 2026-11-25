@@ -87,7 +87,6 @@ void CurlDeleter::operator()(CURL *curl)
 {
     if (curl) curl_easy_cleanup(curl);
 }
-
 /******************************************************************************/
 /*           s o c k o p t _ s e t c l o e x e c _ c a l l b a c k            */
 /******************************************************************************/
@@ -647,10 +646,27 @@ int TPCHandler::PerformHEADRequest(CURL *curl, XrdHttpExtReq &req, State &state,
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1);
     // Set a custom timeout of 60 seconds (= CONNECT_TIMEOUT for convenience) for the HEAD request
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, CONNECT_TIMEOUT);
-    // The transfer cannot reuse the HEAD connections, close them once done
-    curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
-    CURLcode res;
-    res = curl_easy_perform(curl);
+    CURLcode res = static_cast<CURLcode>(-1);
+    // An idle worker may hold a connection the transfer can reuse, and it
+    // keeps that connection for the transfer that follows, which is handed
+    // to the same worker. Without an idle worker, curl_easy_perform keeps
+    // the connection in its private cache until the handle is cleaned up,
+    // which is after the transfer. Close that one when the HEAD finishes.
+    TPCRequestManager::TPCRequest probe("tpc", curl);
+    if (m_request_manager.ProduceIfIdle(probe)) {
+        probe.WaitUntilFinished();
+        if (probe.GetCurlResult() >= 0) {
+            res = static_cast<CURLcode>(probe.GetCurlResult());
+        }
+        // The worker bound the close callback to itself.  Multi-stream
+        // transfers duplicate this handle and replace only the callback data.
+        curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
+        curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, nullptr);
+    }
+    if (res == static_cast<CURLcode>(-1)) {
+        curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
+        res = curl_easy_perform(curl);
+    }
     //Immediately set the CURLOPT_NOBODY flag to 0 as we anyway
     //don't want the next curl call to do be a HEAD request
     curl_easy_setopt(curl, CURLOPT_NOBODY, 0);
@@ -1259,9 +1275,9 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
     if (streams > 1) {
         return RunCurlWithStreams(req, state, streams, rec);
     } else {
-        // Single request: close each connection once done so the redirector
-        // connection does not stay idle for the whole transfer
-        curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
+        // The worker keeps the data connection after the transfer. Its cache
+        // holds one connection, so the redirector socket does not stay open
+        // beside it.
         return RunCurlWithUpdates(curl, req, state, rec);
     }
 }

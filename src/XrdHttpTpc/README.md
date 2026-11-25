@@ -9,6 +9,70 @@ To enable, set the following in the configuration file:
 http.exthandler xrdtpc libXrdHttpTPC.so
 ```
 
+## Transfer worker pool
+
+Single-stream transfers do not run on the thread that received the `COPY`.
+They are handed to a pool of worker threads.  The thread that received the
+`COPY` stays with the client: it sends the performance markers and the final
+status.
+
+All transfers share one queue, served first come, first served.
+
+### Connection reuse
+
+Each worker keeps the connections it opened after its transfer completes, and
+a new transfer is given to the most recently idle worker.  A transfer to the
+same endpoint as the previous one therefore reuses its TLS connection without
+a new TCP or TLS handshake, whichever client connection issued the `COPY`.
+This helps most with small files.  When transfers to many endpoints are
+interleaved, a worker may not hold a connection to the endpoint it is given,
+and opens one.
+
+Before a pull transfer, the `HEAD` request that fetches the source size and
+checksum runs on an idle worker when there is one.  The transfer that follows is
+then handed to the same worker and reuses the connection.
+
+Connections carry no client identity.  Credentials such as `Authorization` are
+request headers sent with each transfer, so a connection opened for one client
+can carry another client's transfer.
+
+A remote server may close an idle connection before the worker gives it up.
+libcurl then opens a new connection for the next transfer.
+
+Multi-stream transfers (`X-Number-Of-Streams` greater than 1) do not use the
+pool and do not reuse connections.
+
+### Limits
+
+At most `tpc.max_active_transfers_per_queue` transfers run at once, one worker
+thread each.  Further transfers wait for a worker.  A waiting transfer gets
+performance markers, and the time it spends waiting does not count towards
+`tpc.timeout`.  A transfer cancelled while it waits, for example because the
+client disconnected, is removed from the queue.
+
+When `tpc.max_waiting_transfers_per_queue` transfers are already waiting, new
+ones are rejected with `429 Too Many Requests`.
+
+### Configuration
+
+```
+tpc.max_active_transfers_per_queue <n>
+tpc.max_waiting_transfers_per_queue <n>
+tpc.worker_idle_timeout <time>
+```
+
+| Directive | Default | Meaning |
+|---|---|---|
+| `tpc.max_active_transfers_per_queue` | 20 | Transfers running at once. |
+| `tpc.max_waiting_transfers_per_queue` | 20 | Transfers waiting for a worker. |
+| `tpc.worker_idle_timeout` | 60s | How long an idle worker, and the connections it holds, are kept. |
+
+`tpc.worker_idle_timeout` takes a time such as `90`, `90s` or `5m`, from 1
+second to 1 hour.  A longer timeout keeps connections for longer between bursts,
+at the cost of idle threads and sockets.
+
+With `tpc.trace info` the server logs when each worker starts and exits.
+
 
 ## HTTPS TPC technical details.
 
