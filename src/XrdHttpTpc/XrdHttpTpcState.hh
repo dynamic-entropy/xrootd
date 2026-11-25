@@ -7,6 +7,8 @@
 #define __XRD_TPC_STATE_HH__
 
 #include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 
 #include "XrdSys/XrdSysRAtomic.hh"
@@ -104,7 +106,7 @@ public:
 
     void SetupHeadersForHEAD(XrdHttpExtReq & req);
 
-    off_t BytesTransferred() const {return m_offset;}
+    off_t BytesTransferred() const {return const_cast<XrdSys::RAtomic<off_t> &>(m_offset).load();}
 
     void SetContentLength(const off_t content_length) { m_content_length = content_length; }
 
@@ -141,7 +143,10 @@ public:
 
     // Returns true if at least one byte of the response has been received,
     // but not the entire contents of the response.
-    bool BodyTransferInProgress() const {return m_offset && (m_offset != m_content_length);}
+    bool BodyTransferInProgress() const {
+        const off_t offset = const_cast<XrdSys::RAtomic<off_t> &>(m_offset).load();
+        return offset && (offset != m_content_length);
+    }
 
     // Duplicate the current state; all settings are copied over, but those
     // related to the transient state are reset as if from a constructor.
@@ -168,6 +173,11 @@ public:
     // Returns -1 on failure, in which case the error is recorded in the
     // finalization error (GetFinalizeErrorCode()), not in the transfer error.
     int Flush();
+
+    // Publish the remote connection description gathered by the worker that owns
+    // the curl handle.  GetConnectionDescription() returns this when it is set,
+    // so the performance marker does not call into libcurl from another thread.
+    void SetConnectionDescription(const std::string &desc);
 
     // Retrieve the description of the remote connection; is of the form:
     //   tcp:129.93.3.4:1234
@@ -212,6 +222,8 @@ private:
     off_t m_push_length; // For push transfers, the size of the file on our server.
     Stream *m_stream;  // stream corresponding to this transfer.
     CURL *m_curl;  // libcurl handle
+    std::mutex m_conn_mutex;
+    std::string m_conn_desc; // worker-published RemoteConnections value
     struct curl_slist *m_headers; // any headers we set as part of the libcurl request.
     std::vector<std::string> m_headers_copy; // Copies of custom headers.
     std::string m_resp_protocol;  // Response protocol in the HTTP status line.
