@@ -12,6 +12,7 @@
 
 #include "XrdTls/XrdTlsTempCA.hh"
 #include "XrdHttpTpcPMarkManager.hh"
+#include "XrdHttpTpcPool.hh"
 
 #include <curl/curl.h>
 #include <openssl/ssl.h>
@@ -200,6 +201,7 @@ private:
     XrdSysError m_log;
     XrdSfsFileSystem *m_sfs;
     std::shared_ptr<XrdTlsTempCA> m_ca_file;
+    TPCRequestManager m_request_manager; // Manager of the request & worker pools for executing TPC transfers
 
     // 16 buffers of a block (16 MB) for each stream. Each stream transfers one
     // block at a time, and waits one round trip between its blocks. The blocks
