@@ -6,7 +6,9 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 
+#include "XrdHttpTpcPMarkManager.hh"
 #include "XrdHttpTpcTPC.hh"
 
 using namespace TPC;
@@ -26,6 +28,17 @@ void TPCRequestManager::TPCQueue::TPCWorker::RunStatic(std::shared_ptr<TPCQueue>
     queue->Done(myself);
 }
 
+int TPCRequestManager::TPCQueue::TPCWorker::closesocket_callback(void *clientp, curl_socket_t fd) {
+    auto *worker = static_cast<TPCWorker *>(clientp);
+    // libcurl copies this callback onto the connection.  Cached connections can
+    // close after the HTTP thread has destroyed the request's PMarkManager, so
+    // only call endPmark while RunCurl still owns the transfer.
+    if (worker && worker->m_active_pmark) {
+        worker->m_active_pmark->endPmark(fd);
+    }
+    return close(fd);
+}
+
 bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCRequestManager::TPCRequest &request) {
     request.MarkStarted();
     if (request.IsCancelled()) {
@@ -35,18 +48,21 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCReq
 
     CURLMcode mres;
     auto curl = request.GetHandle();
+    // Bind CLOSESOCKET to this worker.  libcurl snapshots the callback on the
+    // connection at open time, and the worker outlives connections cached on
+    // the multi-handle.  The per-request TPCLogRecord does not.
+    m_active_pmark = request.GetPMark();
+    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, closesocket_callback);
+    curl_easy_setopt(curl, CURLOPT_CLOSESOCKETDATA, this);
 
-    auto transferPmark = [&]() -> XrdHttpTpc::PMarkManager * {
-        void *priv = nullptr;
-        if (curl_easy_getinfo(curl, CURLINFO_PRIVATE, &priv) != CURLE_OK) {
-            return nullptr;
+    auto finish = [&](const std::string &msg, int curl_result = -1) {
+        // Emit this transfer's firefly while its socket is still open.  libcurl
+        // keeps the connection in this worker's cache for the next request.
+        if (m_active_pmark) {
+            m_active_pmark->endTransferMarks();
         }
-        return static_cast<XrdHttpTpc::PMarkManager *>(priv);
-    };
-    auto endTransferMarks = [&]() {
-        if (XrdHttpTpc::PMarkManager *pmark = transferPmark()) {
-            pmark->endTransferMarks();
-        }
+        m_active_pmark = nullptr;
+        request.SetDone(msg, curl_result);
     };
 
     mres = curl_multi_add_handle(multi_handle, curl);
@@ -56,15 +72,14 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCReq
               "failure="
            << curl_multi_strerror(mres);
         m_queue.m_parent.m_log.Log(LogMask::Error, "TPCWorker", ss.str().c_str());
-        request.SetDone(ss.str());
+        finish(ss.str());
         return true;
     }
 
     auto fail = [&](const std::string &msg, LogMask lvl) {
         curl_multi_remove_handle(multi_handle, curl);
         m_queue.m_parent.m_log.Log(lvl, "TPCWorker", msg.c_str());
-        endTransferMarks();
-        request.SetDone(msg);
+        finish(msg);
     };
 
     CURLcode res = static_cast<CURLcode>(-1);
@@ -79,8 +94,8 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCReq
             fail("Internal curl multi-handle error: " + std::string(curl_multi_strerror(mres)), LogMask::Error);
             return true;
         }
-        if (XrdHttpTpc::PMarkManager *pmark = transferPmark()) {
-            pmark->markCurlHandle(curl);
+        if (m_active_pmark) {
+            m_active_pmark->markCurlHandle(curl);
         }
 
         now = time(NULL);
@@ -122,8 +137,7 @@ bool TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCReq
     }
 
     curl_multi_remove_handle(multi_handle, curl);
-    endTransferMarks();
-    request.SetDone("Transfer complete", res);
+    finish("Transfer complete", res);
     return true;
 }
 
