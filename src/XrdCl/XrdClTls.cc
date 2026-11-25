@@ -28,6 +28,7 @@
 #include "XrdOuc/XrdOucUtils.hh"
 
 #include <mutex>
+#include <new>
 #include <string>
 #include <stdexcept>
 
@@ -35,6 +36,14 @@ static std::unique_ptr<XrdTlsContext> tlsContext = nullptr;
 
 namespace
 {
+  // Destroying this mutex races with InitTLS() during process exit.
+  std::mutex &TlsMutex()
+  {
+    alignas(std::mutex) static unsigned char storage[sizeof(std::mutex)];
+    static std::mutex *mtx = new (static_cast<void *>(storage)) std::mutex();
+    return *mtx;
+  }
+
   //------------------------------------------------------------------------
   // Helper class for setting the message callback for the TLS layer for
   // logging purposes
@@ -95,8 +104,7 @@ namespace XrdCl
 {
   bool InitTLS()
   {
-    static std::mutex tls_mutex;
-    std::lock_guard<std::mutex> tls_lock(tls_mutex);
+    std::lock_guard<std::mutex> tls_lock(TlsMutex());
 
     if (tlsContext)
       return true;
