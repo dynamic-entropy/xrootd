@@ -859,6 +859,9 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
     // A reused connection does not pass through opensocket_callback.  libcurl
     // calls back before the request is sent so this transfer gets its own
     // firefly, and the worker emits that firefly without closing the socket.
+    // A redirect response must not leave its socket cached for the rest of
+    // this transfer.  The state closes that hop from its header callback.
+    state.CloseRedirectHops();
     rec.pmarkManager.startTransfer();
     XrdHttpTpc::PMarkManager::CurlMarkCtx markCtx{&rec.pmarkManager, curl};
     if (rec.pmarkManager.isEnabled()) {

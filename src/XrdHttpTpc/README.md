@@ -42,8 +42,11 @@ became idle most recently.  The worker is marked idle before the client is
 told the previous transfer finished, so a pull `HEAD` and the `GET` that
 follows land on the same connection.
 
-A transfer that fails, is cancelled, is redirected, or ends with an HTTP
-error drops that worker's connection cache before the next request starts.
+A redirect response closes its own connection while it is handled, so a
+pull through a redirector does not keep that socket open for the rest of
+the transfer.  A transfer that fails, is cancelled, is redirected, or ends
+with an HTTP error also drops that worker's connection cache before the
+next request starts.
 Per-transfer options (headers, ranges, timeouts, `Expect`) live on the easy
 handle, which is not reused; the `HEAD` probe clears the options it set
 before the transfer runs.
