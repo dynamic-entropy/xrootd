@@ -127,9 +127,10 @@ private:
                       const std::string &authz);
 
     int PerformHEADRequest(CURL *curl, XrdHttpExtReq &req, TPC::State &state,
-                           bool &success, TPCLogRecord &rec, bool shouldReturnErrorToClient = true);
+                           bool &success, TPCLogRecord &rec, const std::string &remote,
+                           const std::string &bindIp, bool shouldReturnErrorToClient = true);
 
-    int GetRemoteFileInfoTPCPull(CURL *curl, XrdHttpExtReq &req, uint64_t & contentLength, std::map<std::string,std::string> & reprDigest, bool & success, TPCLogRecord &rec);
+    int GetRemoteFileInfoTPCPull(CURL *curl, XrdHttpExtReq &req, uint64_t & contentLength, std::map<std::string,std::string> & reprDigest, bool & success, TPCLogRecord &rec, const std::string &remote, const std::string &bindIp);
 
     // Send a 'performance marker' back to the TPC client, informing it of our
     // progress.  The TPC client will use this information to determine whether
@@ -141,7 +142,8 @@ private:
 
     // Perform the libcurl transfer, periodically sending back chunked updates.
     int RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, TPC::State &state,
-                           TPCLogRecord &rec);
+                           TPCLogRecord &rec, const std::string &remote,
+                           const std::string &bindIp);
 
     // Experimental multi-stream version of RunCurlWithUpdates
     int RunCurlWithStreams(XrdHttpExtReq &req, TPC::State &state,

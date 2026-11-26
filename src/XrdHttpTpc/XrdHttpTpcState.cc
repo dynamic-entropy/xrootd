@@ -150,9 +150,15 @@ void State::SetupHeaders(XrdHttpExtReq &req) {
         }
     }
 
+    if (m_headers) {
+        curl_slist_free_all(m_headers);
+        m_headers = nullptr;
+    }
     if (list != nullptr) {
         curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, list);
         m_headers = list;
+    } else if (m_curl) {
+        curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, nullptr);
     }
 }
 
@@ -186,8 +192,18 @@ void State::SetupHeadersForHEAD(XrdHttpExtReq &req) {
     list = curl_slist_append(list, ss.str().c_str());
   }
 
+  // The HEAD state owns this list.  Its destructor clears CURLOPT_HTTPHEADER
+  // on the shared easy handle, so the headers do not leak into the transfer
+  // when the transfer itself sets none.
+  if (m_headers) {
+    curl_slist_free_all(m_headers);
+    m_headers = nullptr;
+  }
   if (list != nullptr) {
     curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, list);
+    m_headers = list;
+  } else if (m_curl) {
+    curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, nullptr);
   }
 }
 
