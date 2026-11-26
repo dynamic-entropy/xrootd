@@ -632,6 +632,32 @@ int TPCHandler::OpenWaitStall(XrdSfsFile &fh, const std::string &resource,
 }
 
 /******************************************************************************/
+/*                         T p c Q u e u e L a b e l                          */
+/******************************************************************************/
+
+// A worker owns one CURLM for its life, and libcurl keeps the TCP connection
+// in that multi handle after a transfer. The next request on the same queue
+// reuses it, so this label keeps that cache on one organization and one
+// SciTag. A present but invalid SciTag header is 0; that value still marks a
+// flow and gets its own queue. A multi-stream copy keeps its own multi
+// handle. Its HEAD probe still uses this label, so the connection the probe
+// opens stays with this flow.
+static std::string TpcQueueLabel(const XrdHttpExtReq &req)
+{
+    std::stringstream ss;
+    ss << "tpc";
+
+    const char *vorg = req.GetSecEntity().vorg;
+    if (vorg && *vorg)
+        ss << "_" << vorg;
+
+    if (req.mSciTag != -1)
+        ss << "_" << req.mSciTag;
+
+    return ss.str();
+}
+
+/******************************************************************************/
 /*         T P C H a n d l e r : : D e t e r m i n e X f e r S i z e          */
 /******************************************************************************/
 
@@ -652,7 +678,7 @@ int TPCHandler::PerformHEADRequest(CURL *curl, XrdHttpExtReq &req, State &state,
     // to the same worker. Without an idle worker, curl_easy_perform keeps
     // the connection in its private cache until the handle is cleaned up,
     // which is after the transfer. Close that one when the HEAD finishes.
-    TPCRequestManager::TPCRequest probe("tpc", curl);
+    TPCRequestManager::TPCRequest probe(TpcQueueLabel(req), curl);
     if (m_request_manager.ProduceIfIdle(probe)) {
         probe.WaitUntilFinished();
         if (probe.GetCurlResult() >= 0) {
@@ -825,7 +851,7 @@ int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state,
         rec.pmarkManager.armReuseMark(markCtx);
     }
 
-    TPCRequestManager::TPCRequest request("tpc", curl);
+    TPCRequestManager::TPCRequest request(TpcQueueLabel(req), curl);
     request.SetPMark(&rec.pmarkManager);
 
     if (!m_request_manager.Produce(request)) {
