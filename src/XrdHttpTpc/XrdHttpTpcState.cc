@@ -43,6 +43,8 @@ void State::Move(State &other)
     m_headers_copy = other.m_headers_copy;
     m_resp_protocol = other.m_resp_protocol;
     m_is_transfer_state = other.m_is_transfer_state;
+    m_close_redirect_hop = other.m_close_redirect_hop;
+    m_reuse_final_after_redirect = other.m_reuse_final_after_redirect;
     curl_easy_setopt(m_curl, CURLOPT_HEADERDATA, this);
     if (m_is_transfer_state) {
         if (m_push) {
@@ -150,9 +152,15 @@ void State::SetupHeaders(XrdHttpExtReq &req) {
         }
     }
 
+    if (m_headers) {
+        curl_slist_free_all(m_headers);
+        m_headers = nullptr;
+    }
     if (list != nullptr) {
         curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, list);
         m_headers = list;
+    } else if (m_curl) {
+        curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, nullptr);
     }
 }
 
@@ -186,8 +194,18 @@ void State::SetupHeadersForHEAD(XrdHttpExtReq &req) {
     list = curl_slist_append(list, ss.str().c_str());
   }
 
+  // The HEAD state owns this list.  Its destructor clears CURLOPT_HTTPHEADER
+  // on the shared easy handle, so the headers do not leak into the transfer
+  // when the transfer itself sets none.
+  if (m_headers) {
+    curl_slist_free_all(m_headers);
+    m_headers = nullptr;
+  }
   if (list != nullptr) {
     curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, list);
+    m_headers = list;
+  } else if (m_curl) {
+    curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, nullptr);
   }
 }
 
@@ -199,6 +217,7 @@ void State::ResetAfterRequest() {
     m_recv_all_headers = false;
     m_recv_status_line = false;
     m_repr_digests.clear();
+    m_forbid_for_redirect = false;
 }
 
 size_t State::HeaderCB(char *buffer, size_t size, size_t nitems, void *userdata)
@@ -225,6 +244,22 @@ int State::Header(const std::string &header) {
             m_status_code = std::stol(item);
         } catch (...) {
             return 0;
+        }
+        // libcurl caches a redirect's connection unless reuse is forbidden
+        // while that response is still being handled.  Doing it here, from
+        // the header callback, closes the redirector socket before the data
+        // connection is the one in use.  The final status is not a 3xx, so
+        // a copy that did not redirect can still reuse its connection.
+        if (m_close_redirect_hop && m_curl && m_status_code >= 300 && m_status_code < 400) {
+            curl_easy_setopt(m_curl, CURLOPT_FORBID_REUSE, 1L);
+            m_forbid_for_redirect = true;
+        } else if (m_reuse_final_after_redirect && m_forbid_for_redirect && m_curl && m_status_code > 0 &&
+                   m_status_code < 300) {
+            // The redirect hop was closed above.  The data connection is
+            // still this request; allow it back into the cache for the
+            // next range on this handle.
+            curl_easy_setopt(m_curl, CURLOPT_FORBID_REUSE, 0L);
+            m_forbid_for_redirect = false;
         }
         m_recv_status_line = true;
     } else if (header.size() == 0 || header == "\n" || header == "\r\n") {
@@ -355,6 +390,8 @@ State *State::Duplicate() {
     }
 
     State *state = new State(0, *m_stream, curl, m_push, tpcForwardCreds);
+    state->m_close_redirect_hop = m_close_redirect_hop;
+    state->m_reuse_final_after_redirect = m_reuse_final_after_redirect;
 
     if (m_headers) {
         state->m_headers_copy.reserve(m_headers_copy.size());

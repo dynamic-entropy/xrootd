@@ -71,6 +71,7 @@ public:
       m_curl(curl),
       m_headers(NULL),
       m_is_transfer_state(false),
+      m_close_redirect_hop(true),
       tpcForwardCreds(tpcForwardCreds)
     {
         InstallHandlers(curl);
@@ -105,6 +106,16 @@ public:
     void SetupHeaders(XrdHttpExtReq &req);
 
     void SetupHeadersForHEAD(XrdHttpExtReq & req);
+
+    // Close the connection of a redirect response while libcurl is still
+    // handling it, so a pull through a redirector does not keep that socket
+    // for the rest of the transfer.  When reuse_final is set, the final
+    // non-3xx response clears the forbid so a later range on this handle
+    // can reuse the data connection.
+    void CloseRedirectHops(bool reuse_final = false) {
+        m_close_redirect_hop = true;
+        m_reuse_final_after_redirect = reuse_final;
+    }
 
     off_t BytesTransferred() const {return const_cast<XrdSys::RAtomic<off_t> &>(m_offset).load();}
 
@@ -231,6 +242,16 @@ private:
     int m_finalize_error_code = 0; // error code from flushing / closing the local file.
     std::string m_finalize_error_buf; // error message from flushing / closing the local file.
     bool m_is_transfer_state; // If set to true, this state will be used to perform some transfers
+    // When set, a 3xx marks the curl handle so that hop's connection is
+    // closed instead of cached.  Single-stream copies, multi-stream copies,
+    // and the HEAD probe set it.
+    bool m_close_redirect_hop{false};
+    // Clear the forbid once the final response begins, so the data
+    // connection can be reused.  Multi-stream copies set this.  The HEAD
+    // probe does not: its easy-handle cache would otherwise stay open
+    // until the handle is destroyed.
+    bool m_reuse_final_after_redirect{false};
+    bool m_forbid_for_redirect{false};
     bool tpcForwardCreds = false; // if set to true, the redirection will send user credentials to the redirection host
     std::map<std::string, std::string> m_repr_digests; // Repr-Digest values received from the passive server (PULL)
 };

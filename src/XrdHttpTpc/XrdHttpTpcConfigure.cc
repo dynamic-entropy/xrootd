@@ -157,6 +157,15 @@ bool TPCHandler::Configure(const char *configfn, XrdOucEnv *myEnv)
             int max_workers;
             if (XrdOuca2x::a2i(m_log, "tpc.max_active_transfers_per_queue", val, &max_workers, 1, 1000)) return false;
             m_request_manager.SetMaxWorkers(static_cast<unsigned>(max_workers));
+        } else if (!strcmp("tpc.max_active_transfers", val)) {
+            if (!(val = Config.GetWord())) {
+                Config.Close();
+                m_log.Emsg("Config", "tpc.max_active_transfers value not specified.");
+                return false;
+            }
+            int max_global = 0;
+            if (XrdOuca2x::a2i(m_log, "tpc.max_active_transfers", val, &max_global, 1, 100000)) return false;
+            m_request_manager.SetMaxGlobalWorkers(static_cast<unsigned>(max_global));
         } else if (!strcmp("tpc.worker_idle_timeout", val)) {
             if (!(val = Config.GetWord())) {
                 Config.Close();

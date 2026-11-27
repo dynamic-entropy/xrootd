@@ -637,24 +637,33 @@ int TPCHandler::OpenWaitStall(XrdSfsFile &fh, const std::string &resource,
 
 // A worker owns one CURLM for its life, and libcurl keeps the TCP connection
 // in that multi handle after a transfer. The next request on the same queue
-// reuses it, so this label keeps that cache on one organization and one
-// SciTag. A present but invalid SciTag header is 0; that value still marks a
-// flow and gets its own queue. A multi-stream copy keeps its own multi
-// handle. Its HEAD probe still uses this label, so the connection the probe
-// opens stays with this flow.
-static std::string TpcQueueLabel(const XrdHttpExtReq &req)
+// reuses it, so the queue name is the whole link identity: remote endpoint,
+// SciTag, VO, local bind address, and a hash of the credential. A present but
+// invalid SciTag header is 0; that value still marks a flow and gets its own
+// queue. A multi-stream copy keeps its own multi handle. Its HEAD probe still
+// uses this label, so the connection the probe opens stays with this flow.
+static std::string TpcQueueLabel(const XrdHttpExtReq &req, const std::string &remote,
+                                 const std::string &bindIp)
 {
-    std::stringstream ss;
-    ss << "tpc";
-
-    const char *vorg = req.GetSecEntity().vorg;
-    if (vorg && *vorg)
-        ss << "_" << vorg;
-
-    if (req.mSciTag != -1)
-        ss << "_" << req.mSciTag;
-
-    return ss.str();
+    QueueKeyInput in;
+    in.url = remote;
+    in.scitag = req.mSciTag;
+    const XrdSecEntity &sec = req.GetSecEntity();
+    if (sec.vorg && *sec.vorg) {
+        in.vorg = sec.vorg;
+    }
+    if (sec.name && *sec.name) {
+        in.x509_name = sec.name;
+    }
+    if (sec.creds && sec.credslen > 0) {
+        in.creds.assign(sec.creds, static_cast<size_t>(sec.credslen));
+    }
+    in.headers.reserve(req.headers.size());
+    for (const auto &header : req.headers) {
+        in.headers.emplace_back(header.first, header.second);
+    }
+    in.bind_ip = bindIp;
+    return MakeQueueKey(in);
 }
 
 /******************************************************************************/
@@ -667,7 +676,8 @@ static std::string TpcQueueLabel(const XrdHttpExtReq &req)
  * Determine size at remote end.
  */
 int TPCHandler::PerformHEADRequest(CURL *curl, XrdHttpExtReq &req, State &state,
-                                   bool &success, TPCLogRecord &rec, bool shouldReturnErrorToClient) {
+                                   bool &success, TPCLogRecord &rec, const std::string &remote,
+                                   const std::string &bindIp, bool shouldReturnErrorToClient) {
     success = false;
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1);
     // Set a custom timeout of 60 seconds (= CONNECT_TIMEOUT for convenience) for the HEAD request
@@ -678,7 +688,7 @@ int TPCHandler::PerformHEADRequest(CURL *curl, XrdHttpExtReq &req, State &state,
     // to the same worker. Without an idle worker, curl_easy_perform keeps
     // the connection in its private cache until the handle is cleaned up,
     // which is after the transfer. Close that one when the HEAD finishes.
-    TPCRequestManager::TPCRequest probe(TpcQueueLabel(req), curl);
+    TPCRequestManager::TPCRequest probe(TpcQueueLabel(req, remote, bindIp), curl);
     if (m_request_manager.ProduceIfIdle(probe)) {
         probe.WaitUntilFinished();
         if (probe.GetCurlResult() >= 0) {
@@ -693,14 +703,17 @@ int TPCHandler::PerformHEADRequest(CURL *curl, XrdHttpExtReq &req, State &state,
         curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
         res = curl_easy_perform(curl);
     }
-    //Immediately set the CURLOPT_NOBODY flag to 0 as we anyway
-    //don't want the next curl call to do be a HEAD request
-    curl_easy_setopt(curl, CURLOPT_NOBODY, 0);
-    // Reset the CURLOPT_TIMEOUT to no timeout (default)
+    // The GET or PUT that follows reuses this easy handle.  Clear the options
+    // that belong only to the HEAD, including a byte range or method a caller
+    // might have set, so they cannot leak into the transfer.
+    curl_easy_setopt(curl, CURLOPT_NOBODY, 0L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
-    // Multi-stream transfers duplicate this handle and rely on connection reuse
     curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 0L);
-    curl_easy_setopt(curl, CURLOPT_FAILONERROR, true);
+    curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 0L);
+    curl_easy_setopt(curl, CURLOPT_RANGE, static_cast<char *>(nullptr));
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, static_cast<char *>(nullptr));
+    // Multi-stream transfers duplicate this handle and rely on connection reuse
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
     std::stringstream ss;
 
@@ -750,14 +763,14 @@ int TPCHandler::PerformHEADRequest(CURL *curl, XrdHttpExtReq &req, State &state,
     return 0;
 }
 
-int TPCHandler::GetRemoteFileInfoTPCPull(CURL *curl, XrdHttpExtReq &req, uint64_t &contentLength, std::map<std::string,std::string> & reprDigest, bool & success, TPCLogRecord &rec) {
+int TPCHandler::GetRemoteFileInfoTPCPull(CURL *curl, XrdHttpExtReq &req, uint64_t &contentLength, std::map<std::string,std::string> & reprDigest, bool & success, TPCLogRecord &rec, const std::string &remote, const std::string &bindIp) {
     State state(curl,req.tpcForwardCreds);
     //Don't forget to copy the headers of the client's request before doing the HEAD call. Otherwise, if there is a need for authentication,
     //it will fail
     state.SetupHeadersForHEAD(req);
     int result;
     //In case we cannot get the file HEAD request, we return the error to the client
-    if ((result = PerformHEADRequest(curl, req, state, success, rec)) || !success) {
+    if ((result = PerformHEADRequest(curl, req, state, success, rec, remote, bindIp)) || !success) {
         return result;
     }
     contentLength = state.GetContentLength();
@@ -841,17 +854,21 @@ int TPCHandler::SendPerfMarker(XrdHttpExtReq &req, TPCLogRecord &rec, std::vecto
 /*        T P C H a n d l e r : : R u n C u r l W i t h U p d a t e s         */
 /******************************************************************************/
 
-int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state, TPCLogRecord &rec) {
+int TPCHandler::RunCurlWithUpdates(CURL *curl, XrdHttpExtReq &req, State &state, TPCLogRecord &rec,
+                                   const std::string &remote, const std::string &bindIp) {
     // A reused connection does not pass through opensocket_callback.  libcurl
     // calls back before the request is sent so this transfer gets its own
     // firefly, and the worker emits that firefly without closing the socket.
+    // A redirect response must not leave its socket cached for the rest of
+    // this transfer.  The state closes that hop from its header callback.
+    state.CloseRedirectHops();
     rec.pmarkManager.startTransfer();
     XrdHttpTpc::PMarkManager::CurlMarkCtx markCtx{&rec.pmarkManager, curl};
     if (rec.pmarkManager.isEnabled()) {
         rec.pmarkManager.armReuseMark(markCtx);
     }
 
-    TPCRequestManager::TPCRequest request(TpcQueueLabel(req), curl);
+    TPCRequestManager::TPCRequest request(TpcQueueLabel(req, remote, bindIp), curl);
     request.SetPMark(&rec.pmarkManager);
 
     if (!m_request_manager.Produce(request)) {
@@ -1130,7 +1147,7 @@ int TPCHandler::ProcessPushReq(const std::string & resource, XrdHttpExtReq &req)
     State state(0, stream, curl, true, req.tpcForwardCreds);
     state.SetupHeaders(req);
 
-    return RunCurlWithUpdates(curl, req, state, rec);
+    return RunCurlWithUpdates(curl, req, state, rec, resource, "");
 }
 
 /******************************************************************************/
@@ -1168,6 +1185,10 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
     // The above requires the server to utilize the same IP, that was used to
     // start the TPC, for the resolution of the given TPC instead of
     // using any of the IPs available.
+    // The queue key includes this address, so the HEAD probe and the transfer
+    // share a worker only when they bind the same local IP.  An empty string
+    // means libcurl picks the address, and those transfers share as well.
+    std::string bindIp;
     if (m_fixed_route) {
         char ip[64];
         char ipType = 0;
@@ -1181,7 +1202,8 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
             logTransferEvent(LogMask::Error, rec, "FIXED_ROUTE_ERR", "Failed to determine local address of incoming fixed route request");
         } else {
             logTransferEvent(LogMask::Info, rec, "LOCAL IP", ip);
-            curl_easy_setopt(curl, CURLOPT_INTERFACE, ip);
+            bindIp = ip;
+            curl_easy_setopt(curl, CURLOPT_INTERFACE, bindIp.c_str());
         }
     }
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1);
@@ -1260,7 +1282,7 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
         bool success = false;
         bool mismatchDigests = false;
         std::map<std::string,std::string> sourceFileReprDigest;
-        GetRemoteFileInfoTPCPull(curl, req, sourceFileContentLength, sourceFileReprDigest, success, rec);
+        GetRemoteFileInfoTPCPull(curl, req, sourceFileContentLength, sourceFileReprDigest, success, rec, resource, bindIp);
         if(success) {
             //In the case we cannot get the information from the source server (offline or other error)
             //we just don't add the file information to the opaque of the local file to open
@@ -1304,7 +1326,7 @@ int TPCHandler::ProcessPullReq(const std::string &resource, XrdHttpExtReq &req) 
         // The worker keeps the data connection after the transfer. Its cache
         // holds one connection, so the redirector socket does not stay open
         // beside it.
-        return RunCurlWithUpdates(curl, req, state, rec);
+        return RunCurlWithUpdates(curl, req, state, rec, resource, bindIp);
     }
 }
 

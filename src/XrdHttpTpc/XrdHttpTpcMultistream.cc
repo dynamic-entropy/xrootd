@@ -583,6 +583,10 @@ int TPCHandler::RunCurlWithStreams(XrdHttpExtReq &req, State &state,
     std::vector<ManagedCurlHandle> curl_handles;
     std::vector<State*> handles;
     std::stringstream err_ss;
+    // Outside the pool, so these streams do not consume a pool worker.
+    // A redirect hop is still closed.  The final connection stays reusable
+    // so the next range on the same handle can take it.
+    state.CloseRedirectHops(true);
     try {
         int retval = RunCurlWithStreamsImpl(req, state, streams, handles, curl_handles, rec);
         for (std::vector<State*>::iterator state_iter = handles.begin();
