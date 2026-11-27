@@ -55,7 +55,11 @@ A remote server may close an idle connection before the worker gives it up.
 libcurl then opens a new connection for the next transfer.
 
 Multi-stream transfers (`X-Number-Of-Streams` greater than 1) do not use the
-pool and do not reuse connections.
+pool and do not count against `tpc.max_active_transfers` or the per-link cap.
+They already run on the client thread, with one connection per stream.
+Putting them in the pool would queue those ranges behind the per-link cap.
+A redirect hop is still closed, and the data connection can be reused by
+the next range on that stream.  The pool caps bound pooled workers only.
 
 ### Limits and fairness
 

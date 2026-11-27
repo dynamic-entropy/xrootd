@@ -86,3 +86,27 @@ start_pull() {
 	start_pull "$SRC_HTTP/file_src"
 	assert_connections "$SRC_PORT" 1
 }
+
+# Start a multi-stream pull and wait until a ranged GET reaches the source.
+start_pull_streams() {
+	local source=$1
+
+	curl -s -X COPY -H "Source: $source" -H "X-Number-Of-Streams: 2" \
+		"$DST_HTTP/file_dst" >/dev/null 2>&1 3>&- &
+	echo $! > "$BATS_TEST_TMPDIR/copy.pid"
+
+	for _ in {1..200}; do
+		grep -qsF 'got hdr line: GET /file_src' "$SRC_LOG" && return 0
+		sleep 0.05
+	done
+
+	echo "the multi-stream pull did not send its GET to the source" >&2
+	return 1
+}
+
+@test "multi-stream pull via a redirector holds no idle connection" {
+	start_pull_streams "$RDR_HTTP/file_src"
+	assert_connections "$RDR_PORT" 0
+	# One connection per stream, both to the data server.
+	assert_connections "$SRC_PORT" 2
+}
