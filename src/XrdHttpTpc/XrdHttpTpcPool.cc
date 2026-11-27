@@ -52,15 +52,23 @@ std::string Fingerprint(const std::string &data) {
     return out;
 }
 
-// One log field.  '|' separates fields, so it cannot appear inside one.
-std::string Field(const std::string &value) {
-    std::string out = value;
-    for (char &ch : out) {
-        if (ch == '|' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') {
-            ch = '_';
+// Percent-encode bytes that would collide or split the log field.
+// The empty string stays empty, so it is not the same key as "-".
+// A space stays distinct from an underscore.  The result is one token.
+std::string EncodeField(const std::string &value) {
+    static const char *hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char ch : value) {
+        if (ch == '%' || ch == '|' || ch <= ' ' || ch == 0x7f) {
+            out.push_back('%');
+            out.push_back(hex[ch >> 4]);
+            out.push_back(hex[ch & 0xf]);
+        } else {
+            out.push_back(static_cast<char>(ch));
         }
     }
-    return out.empty() ? "-" : out;
+    return out;
 }
 
 // scheme, host, port, and userinfo.  The path is ignored on purpose: two
@@ -185,8 +193,8 @@ std::string TPC::MakeQueueKey(const QueueKeyInput &in) {
         key << "tpc|unparsed";
     }
     key << "|s=" << (in.scitag < 0 ? std::string("-") : std::to_string(in.scitag))
-        << "|v=" << Field(in.vorg)
-        << "|b=" << Field(in.bind_ip)
+        << "|v=" << EncodeField(in.vorg)
+        << "|b=" << EncodeField(in.bind_ip)
         << "|c=" << credential;
     return key.str();
 }
@@ -326,7 +334,11 @@ TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCRequestM
 
         // curl_multi_wakeup interrupts curl_multi_poll.  curl_multi_wait
         // ignores it, so a cancel would sit until this timeout.
-#if LIBCURL_VERSION_NUM >= 0x074200
+        // curl_multi_wakeup (7.68) interrupts curl_multi_poll and does not
+        // interrupt curl_multi_wait.  Use poll only when wakeup exists, so
+        // a cancel is not stuck for this timeout on one and ignored on the
+        // other.
+#if LIBCURL_VERSION_NUM >= 0x074400
         mres = curl_multi_poll(multi_handle, NULL, 0, 1000, nullptr);
 #else
         mres = curl_multi_wait(multi_handle, NULL, 0, 1000, nullptr);
@@ -353,7 +365,11 @@ TPCRequestManager::TPCQueue::TPCWorker::RunCurl(CURLM *multi_handle, TPCRequestM
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
         long redirects = 0;
         curl_easy_getinfo(curl, CURLINFO_REDIRECT_COUNT, &redirects);
-        if (status <= 0 || status >= 400 || redirects > 0) {
+        // A terminal 3xx has REDIRECT_COUNT 0 when the caller did not follow
+        // it.  status >= 300 covers that and every error status.  The next
+        // RunCurl clears CURLOPT_FORBID_REUSE, so the decision has to be
+        // here: drop the cache, do not trust a header callback.
+        if (status <= 0 || status >= 300 || redirects > 0) {
             reuse = false;
         }
     }
@@ -514,7 +530,19 @@ TPCRequestManager::TPCRequest *TPCRequestManager::TPCQueue::WaitForRequest(TPCWo
             // finished; the loop then waits again until the same deadline.
             continue;
         }
-        if (!woken || worker.m_reap || m_done.load(std::memory_order_relaxed)) {
+        // A reap or a timeout can race with work that was queued for a
+        // different worker.  Leaving now would drop that work if this is
+        // the last worker.  Run it when this worker is the one that should.
+        const bool forced = worker.m_force_stop || m_done.load(std::memory_order_relaxed) || m_parent.IsShutdown();
+        if (!forced && !m_ops.empty() && (worker.m_reap || !woken)) {
+            worker.m_reap = false;
+            if (!(m_parent.HasStarved() && m_workers.size() > 1)) {
+                auto result = m_ops.front();
+                m_ops.pop_front();
+                return result;
+            }
+        }
+        if (!woken || worker.m_reap || m_done.load(std::memory_order_relaxed) || m_parent.IsShutdown()) {
             DetachWorker(worker);
             return nullptr;
         }
@@ -560,8 +588,14 @@ void TPCRequestManager::TPCQueue::DetachWorker(TPCWorker &worker) {
     if (!m_workers.empty()) {
         return;
     }
-    if (worker.m_force_stop || m_parent.IsShutdown()) {
-        const char *msg = m_parent.IsShutdown() ? "Transfer cancelled" : "TPC worker could not start";
+    // No worker remains.  A queued request must not stay unfinished: the
+    // client is blocked in WaitUntilFinished, and a new queue will not
+    // adopt these pointers.
+    if (!m_ops.empty()) {
+        const char *msg = m_parent.IsShutdown() ? "Transfer cancelled" : "TPC worker exited";
+        if (worker.m_force_stop && !m_parent.IsShutdown()) {
+            msg = "TPC worker could not start";
+        }
         for (TPCRequest *op : m_ops) {
             op->SetDone(msg);
         }
@@ -608,13 +642,15 @@ bool TPCRequestManager::TPCQueue::NeedsWorker() const {
     return !m_done.load(std::memory_order_relaxed) && !m_parent.IsShutdown() && !m_ops.empty() && m_workers.empty() && m_claims == 0;
 }
 
-bool TPCRequestManager::TPCQueue::TrySpawnForStarved() {
+TPCRequestManager::TPCQueue::StarvedSpawn TPCRequestManager::TPCQueue::TrySpawnForStarved() {
     std::unique_lock<std::mutex> lk(m_mutex);
     if (!NeedsWorker()) {
-        return true;
+        // Cancel removed the request after this queue was listed.  The
+        // slot is still free for the next starved link.
+        return StarvedSpawn::Unused;
     }
     if (!m_parent.AcquireSlot()) {
-        return false;
+        return StarvedSpawn::Blocked;
     }
     if (!SpawnWorker()) {
         const bool empty = m_workers.empty();
@@ -627,9 +663,9 @@ bool TPCRequestManager::TPCQueue::TrySpawnForStarved() {
         }
         lk.unlock();
         m_parent.ReleaseSlot();
-        return true;
+        return StarvedSpawn::Unused;
     }
-    return true;
+    return StarvedSpawn::Started;
 }
 
 // Queue a request for processing.  If the queue is full, the request will
@@ -780,26 +816,41 @@ void TPCRequestManager::ReapOneIdle() {
 }
 
 void TPCRequestManager::DispatchStarved() {
-    std::shared_ptr<TPCQueue> queue;
-    {
-        std::unique_lock<std::shared_mutex> lock(m_mutex);
-        if (m_shutdown.load(std::memory_order_relaxed)) {
-            return;
-        }
-        while (!m_starved.empty() && !queue) {
-            queue = m_starved.front().lock();
-            m_starved.pop_front();
-            m_starved_count.fetch_sub(1, std::memory_order_acq_rel);
-            if (queue) {
-                queue->m_listed.store(false, std::memory_order_release);
+    // One released slot.  Skip queues whose request was cancelled, and
+    // keep going until a queue actually starts a worker or the list is
+    // empty.  Stopping on the first empty queue left the next link queued
+    // with m_live at 0 and nobody left to call here again.
+    for (;;) {
+        std::shared_ptr<TPCQueue> queue;
+        {
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
+            if (m_shutdown.load(std::memory_order_relaxed)) {
+                return;
+            }
+            while (!m_starved.empty() && !queue) {
+                queue = m_starved.front().lock();
+                m_starved.pop_front();
+                m_starved_count.fetch_sub(1, std::memory_order_acq_rel);
+                if (queue) {
+                    queue->m_listed.store(false, std::memory_order_release);
+                }
             }
         }
-    }
-    if (!queue || queue->IsDone()) {
-        return;
-    }
-    if (!queue->TrySpawnForStarved()) {
-        NoteStarved(queue);
+        if (!queue || queue->IsDone()) {
+            if (!queue) {
+                return;
+            }
+            continue;
+        }
+        switch (queue->TrySpawnForStarved()) {
+            case TPCQueue::StarvedSpawn::Started:
+                return;
+            case TPCQueue::StarvedSpawn::Unused:
+                continue;
+            case TPCQueue::StarvedSpawn::Blocked:
+                NoteStarved(queue);
+                return;
+        }
     }
 }
 

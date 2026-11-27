@@ -186,7 +186,11 @@ class TPCRequestManager final {
         // Called with no queue lock.  Spawns one worker if this queue has
         // queued work and no one to run it.  Returns false when a global slot
         // was not available.
-        bool TrySpawnForStarved();
+        // Started: a worker was spawned and took the free slot.
+        // Unused: this queue has nothing to run, so the slot is still free.
+        // Blocked: a slot was not available.
+        enum class StarvedSpawn { Started, Unused, Blocked };
+        StarvedSpawn TrySpawnForStarved();
 
        private:
         friend class TPCRequestManager;

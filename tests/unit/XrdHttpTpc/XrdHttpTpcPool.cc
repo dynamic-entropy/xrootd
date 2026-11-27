@@ -356,6 +356,26 @@ TEST(QueueKey, HostPortSchemeAndAddressStayApart) {
     EXPECT_NE(v6.find("[::1]"), std::string::npos);
 }
 
+TEST(QueueKey, SanitizedVoDoesNotCollide) {
+    TPC::QueueKeyInput plain;
+    TPC::QueueKeyInput dashed;
+    TPC::QueueKeyInput spaced;
+    plain.url = dashed.url = spaced.url = "https://se.example/file";
+    dashed.vorg = "-";
+    EXPECT_NE(TPC::MakeQueueKey(plain), TPC::MakeQueueKey(dashed));
+
+    plain.vorg = "atlas role";
+    spaced.vorg = "atlas_role";
+    EXPECT_NE(TPC::MakeQueueKey(plain), TPC::MakeQueueKey(spaced));
+
+    TPC::QueueKeyInput bind_space;
+    TPC::QueueKeyInput bind_under;
+    bind_space.url = bind_under.url = "https://se.example/file";
+    bind_space.bind_ip = "10.0.0.1 eth0";
+    bind_under.bind_ip = "10.0.0.1_eth0";
+    EXPECT_NE(TPC::MakeQueueKey(bind_space), TPC::MakeQueueKey(bind_under));
+}
+
 TEST(QueueKey, CredentialSciTagVoAndBindDoNotShare) {
     TPC::QueueKeyInput base;
     base.url = "https://se.example/path";
@@ -763,4 +783,118 @@ TEST_F(PoolEnv, ShutdownUnblocksARunningTransfer) {
     Transfer later(server.Url("/s"), KeyFor(server.Url("/s")));
     EXPECT_FALSE(later.Submit(mgr_));
     server.Release();
+}
+
+TEST_F(PoolEnv, TerminalRedirectIsNotReused) {
+    LocalHttp server([&](int fd, const std::string &req) {
+        if (req.find("GET /redir ") != std::string::npos) {
+            SendAll(fd, HttpResponse(302, "Found",
+                                     "Location: http://127.0.0.1:" + std::to_string(server.Port()) + "/landed\r\n", ""));
+        } else {
+            SendAll(fd, HttpResponse(200, "OK", "", "ok"));
+        }
+    });
+    const std::string label = KeyFor(server.Url("/redir"));
+    Transfer redirected(server.Url("/redir"), label);
+    ASSERT_TRUE(redirected.Submit(mgr_));
+    redirected.request.WaitUntilFinished();
+    EXPECT_EQ(redirected.request.GetCurlResult(), 0);
+    const int after = server.Accepts();
+    ASSERT_GE(after, 1);
+
+    Transfer next(server.Url("/plain"), label);
+    ASSERT_TRUE(next.Submit(mgr_));
+    next.request.WaitUntilFinished();
+    EXPECT_EQ(next.request.GetCurlResult(), 0);
+    EXPECT_EQ(next.NewConnections(), 1);
+    EXPECT_GT(server.Accepts(), after);
+}
+
+TEST_F(PoolEnv, CancelledStarvedQueueDoesNotStrandTheNextLink) {
+    mgr_.SetMaxWorkers(2);
+    mgr_.SetMaxGlobalWorkers(1);
+    mgr_.SetWorkerIdleTimeout(30s);
+
+    LocalHttp busy([&](int fd, const std::string &) {
+        busy.Hold();
+        SendAll(fd, HttpResponse(200, "OK", "", "busy"));
+    });
+    LocalHttp older(RespondOk);
+    LocalHttp newer(RespondOk);
+
+    Transfer held(busy.Url("/held"), KeyFor(busy.Url("/held")));
+    ASSERT_TRUE(held.Submit(mgr_));
+    ASSERT_TRUE(busy.WaitRequests(1, 2s));
+
+    Transfer first_wait(older.Url("/old"), KeyFor(older.Url("/old")));
+    ASSERT_TRUE(first_wait.Submit(mgr_));
+    Transfer second_wait(newer.Url("/new"), KeyFor(newer.Url("/new")));
+    ASSERT_TRUE(second_wait.Submit(mgr_));
+
+    first_wait.request.Cancel();
+    EXPECT_TRUE(first_wait.request.WaitFor(1s));
+    EXPECT_EQ(older.Requests(), 0);
+
+    busy.Release();
+    EXPECT_TRUE(newer.WaitRequests(1, 2s)) << "cancelling the older starved link consumed the only free slot";
+    second_wait.request.WaitUntilFinished();
+    EXPECT_EQ(second_wait.request.GetCurlResult(), 0);
+}
+
+TEST_F(PoolEnv, ReapedWorkerDoesNotDropAQueuedRequest) {
+    mgr_.SetMaxWorkers(2);
+    mgr_.SetMaxGlobalWorkers(2);
+    mgr_.SetWorkerIdleTimeout(30s);
+
+    auto arrived = std::make_shared<std::atomic<int>>(0);
+    auto released = std::make_shared<std::atomic<bool>>(false);
+    auto mu = std::make_shared<std::mutex>();
+    auto cv = std::make_shared<std::condition_variable>();
+    LocalHttp primary([=](int fd, const std::string &) {
+        if (!released->load()) {
+            {
+                std::lock_guard<std::mutex> lock(*mu);
+                arrived->fetch_add(1);
+            }
+            cv->notify_all();
+            std::unique_lock<std::mutex> lock(*mu);
+            cv->wait(lock, [&] { return released->load(); });
+        }
+        SendAll(fd, HttpResponse(200, "OK", "", "ok"));
+    });
+    LocalHttp other(RespondOk);
+
+    const std::string label = KeyFor(primary.Url("/a"));
+    Transfer first(primary.Url("/a"), label);
+    Transfer second(primary.Url("/a"), label);
+    ASSERT_TRUE(first.Submit(mgr_));
+    ASSERT_TRUE(second.Submit(mgr_));
+    {
+        std::unique_lock<std::mutex> lock(*mu);
+        ASSERT_TRUE(cv->wait_for(lock, 2s, [&] { return arrived->load() >= 2; }));
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(*mu);
+        released->store(true);
+    }
+    cv->notify_all();
+    first.request.WaitUntilFinished();
+    second.request.WaitUntilFinished();
+    // Both workers are idle and inside their wait.  Nothing is starved yet,
+    // so they do not exit on their own.
+    std::this_thread::sleep_for(50ms);
+
+    Transfer blocked(other.Url("/b"), KeyFor(other.Url("/b")));
+    ASSERT_TRUE(blocked.Submit(mgr_));
+    // Reaps the oldest idle worker.  The third copy claims the other one.
+    Transfer third(primary.Url("/a"), label);
+    ASSERT_TRUE(third.Submit(mgr_));
+    EXPECT_TRUE(third.request.WaitFor(2s)) << "the reaped worker dropped the queued request";
+    if (third.request.GetCurlResult() == 0) {
+        EXPECT_EQ(third.body, "ok");
+    } else {
+        EXPECT_NE(third.request.GetMessage().find("exited"), std::string::npos);
+    }
+    blocked.request.Cancel();
 }
