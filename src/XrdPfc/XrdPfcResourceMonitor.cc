@@ -48,18 +48,49 @@ ResourceMonitor::~ResourceMonitor()
 
 void ResourceMonitor::CrossCheckIfScanIsInProgress(const std::string &lfn, XrdSysCondVar &cond)
 {
+   // Once the initial scan is over, this stays false.
+   if ( ! m_dir_scan_in_progress.load(std::memory_order_acquire))
+      return;
+
    m_dir_scan_mutex.Lock();
    if (m_dir_scan_in_progress) {
       bool dir_checked = false;
-      m_dir_scan_open_requests.push_back({lfn, cond, dir_checked});
+      m_dir_scan_open_requests.push_back({lfn, cond, dir_checked, time(0)});
       cond.Lock();
       m_dir_scan_mutex.UnLock();
-      while ( ! dir_checked)
-         cond.Wait();
+      // Wake up to report a long wait. dir_checked is set under cond, so no signal is lost.
+      while ( ! dir_checked) {
+         if (cond.Wait(s_dir_scan_wait_report_interval) && ! dir_checked) {
+            cond.UnLock();
+            report_dir_scan_wait();
+            cond.Lock();
+         }
+      }
       cond.UnLock();
    } else {
       m_dir_scan_mutex.UnLock();
    }
+}
+
+void ResourceMonitor::report_dir_scan_wait()
+{
+   // At most one report per interval, from the waiting open that times out first.
+   // The end of the scan pops the queue without the mutex, so read it only before.
+   XrdSysMutexHelper _lock(m_dir_scan_mutex);
+   const time_t now = time(0);
+   if ( ! m_dir_scan_in_progress || m_dir_scan_open_requests.empty() ||
+        now - m_dir_scan_last_wait_report < s_dir_scan_wait_report_interval)
+      return;
+   m_dir_scan_last_wait_report = now;
+   TRACE(Warning, "CrossCheckIfScanIsInProgress " << m_dir_scan_open_requests.size()
+         << " file opens are waiting for the initial scan of their directories, the oldest for "
+         << now - m_dir_scan_open_requests.front().f_queued << "s");
+}
+
+void ResourceMonitor::count_released_open(const LfnCondRecord &lcr)
+{
+   ++m_dir_scan_n_released;
+   m_dir_scan_max_wait = std::max(m_dir_scan_max_wait, time(0) - lcr.f_queued);
 }
 
 void ResourceMonitor::process_inter_dir_scan_open_requests(FsTraversal &fst)
@@ -71,6 +102,7 @@ void ResourceMonitor::process_inter_dir_scan_open_requests(FsTraversal &fst)
       m_dir_scan_mutex.UnLock();
 
       cross_check_or_process_oob_lfn(lcr.f_lfn, fst);
+      count_released_open(lcr);
       lcr.f_cond.Lock();
       lcr.f_checked = true;
       lcr.f_cond.Signal();
@@ -157,11 +189,7 @@ void ResourceMonitor::scan_dir_and_recurse(FsTraversal &fst)
    std::vector<std::string> dirs;
    dirs.swap(fst.m_current_dirs);
 
-   if (++m_dir_scan_check_counter >= 100)
-   {
-      process_inter_dir_scan_open_requests(fst);
-      m_dir_scan_check_counter = 0;
-   }
+   process_inter_dir_scan_open_requests(fst);
 
    // Descend into sub-dirs, do not accumulate into recursive_subdir_usage yet. This is done
    // in a separate pass to allow for proper accounting of files being opened during the initial scan.
@@ -190,9 +218,8 @@ bool ResourceMonitor::perform_initial_scan()
    if ( ! fst.begin_traversal(root_ds, "/"))
       return false;
 
-   // The following are initialized in ResourceMonitor.hh to avoid a race at startup:
+   // The following is initialized in ResourceMonitor.hh to avoid a race at startup:
    //   m_dir_scan_in_progress = true;
-   //   m_dir_scan_check_counter = 0;
 
    scan_dir_and_recurse(fst);
 
@@ -203,12 +230,12 @@ bool ResourceMonitor::perform_initial_scan()
    {
       XrdSysMutexHelper _lock(m_dir_scan_mutex);
       m_dir_scan_in_progress = false;
-      m_dir_scan_check_counter = 0;
    }
    // m_dir_scan_open_requests should now be final, ie, no new entries will be added.
    while ( ! m_dir_scan_open_requests.empty())
    {
       LfnCondRecord &lcr = m_dir_scan_open_requests.front();
+      count_released_open(lcr);
       lcr.f_cond.Lock();
       lcr.f_checked = true;
       lcr.f_cond.Signal();
@@ -643,22 +670,7 @@ long long ResourceMonitor::get_file_usage_bytes_to_remove(const DataFsPurgeshot 
    // helper lambda function
    auto clamp = [&x, &bytes_to_remove](long long lowval, long long highval)
    {
-      long long val = x;
-      long long newval = val - bytes_to_remove;
-
-      // removed too much
-      if (newval < lowval)
-      {
-         return lowval - val;
-      }
-
-      // removed too little
-      if (newval > highval)
-      {
-         return val - highval;
-      }
-      // keep the original value
-      return bytes_to_remove;
+      return clamp_bytes_to_remove(x, bytes_to_remove, lowval, highval);
    };
 
    // under file quota, nothing to do
@@ -910,6 +922,9 @@ void ResourceMonitor::main_thread_function()
 
       time_t is_duration = time(0) - is_start;
       TRACE(Info, tpfx << "Initial directory scan complete, duration=" << is_duration <<"s");
+      if (m_dir_scan_n_released > 0)
+         TRACE(Info, tpfx << m_dir_scan_n_released << " file opens waited for the initial scan of their directories, the longest for "
+               << m_dir_scan_max_wait << "s");
 
       // run first process queues
       int n_proc_is = process_queues();
